@@ -1,0 +1,8 @@
+namespace RakNet;
+
+public enum PluginReceiveResult
+{
+	RR_STOP_PROCESSING_AND_DEALLOCATE,
+	RR_CONTINUE_PROCESSING,
+	RR_STOP_PROCESSING
+}

@@ -1,0 +1,11 @@
+<Module>	class		
+Brix.Common.Collections.BrixCollectionExtender	class	System.Object	NoLeak,NoLeak,NoLeak,NoLeak
+Brix.Common.Collections.SingleGenericWrapperEnumerable`1	class	System.Object	WrapList,WrapHashSet,<WrapList>b__1,<WrapHashSet>b__4
+Brix.Common.Collections.DualGenericWrapperEnumerable`2	class	System.Object	WrapDictionary,WrapSlinq,<WrapDictionary>b__1,<WrapSlinq>b__4
+Brix.Common.Collections.EnumerableBoxer`3	class	System.ValueType	GetEnumerator,System.Collections.Generic.IEnumerable<T>.GetEnumerator,System.Collections.IEnumerable.GetEnumerator
+Brix.Common.PoolableObject`1	class	System.Object	.ctor,Request,ResetObject,ReleaseToPool,.cctor
+Brix.Common.Collections.EnumeratorBoxer`2	class	<spec>	get_Enumerator,set_Enumerator,MoveNext,Reset,get_Current,System.Collections.IEnumerator.get_Current,ResetObject,Dispose,.ctor
+Brix.Common.Collections.SingleEnumerationSlinqEnumerable`2	class	System.ValueType	.ctor,Slinq,GetEnumerator,System.Collections.Generic.IEnumerable<T>.GetEnumerator,System.Collections.IEnumerable.GetEnumerator
+Brix.Common.TypeExtensions	class	System.Object	MakeInstance,MakeInstance,MakeInstance,MakeInstance,MakeInstance,MakeInstance,MakeInstance,MakeInstance
+Brix.Common.TypeExtensions/TypeToIgnore	class	System.Object	.ctor
+Brix.Common.TypeExtensions/InstanceCreationFactory`3	class	System.Object	CreateInstanceOf,CreateInstanceOf,CacheInstanceCreationMethodIfRequired,<CacheInstanceCreationMethodIfRequired>b__0,.cctor

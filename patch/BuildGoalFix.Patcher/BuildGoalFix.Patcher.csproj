@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>BuildGoalFix.Patcher</AssemblyName>
+    <NoWarn>MSB3277;NU1702</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="CastleStory.BuildGoalFix.Loader"><HintPath>../BuildGoalFix.Loader/bin/Release/net35/CastleStory.BuildGoalFix.Loader.dll</HintPath></Reference>
+    <Reference Include="Mono.Cecil"><HintPath>../BuildGoalFix.Loader/lib/Mono.Cecil.dll</HintPath></Reference>
+    <Reference Include="Mono.Cecil.Rocks"><HintPath>../BuildGoalFix.Loader/lib/Mono.Cecil.Rocks.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

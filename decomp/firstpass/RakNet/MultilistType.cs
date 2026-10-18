@@ -1,0 +1,10 @@
+namespace RakNet;
+
+public enum MultilistType
+{
+	ML_UNORDERED_LIST,
+	ML_STACK,
+	ML_QUEUE,
+	ML_ORDERED_LIST,
+	ML_VARIABLE_DURING_RUNTIME
+}

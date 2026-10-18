@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net35</TargetFramework>
+    <AssemblyName>CastleStory.BuildGoalFix</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <GameManaged>/games/steamapps/common/Castle Story/Castle Story_Data/Managed</GameManaged>
+    <FrameworkPathOverride>$(GameManaged)</FrameworkPathOverride>
+    <NoStdLib>true</NoStdLib>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Deterministic>true</Deterministic>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="mscorlib"><HintPath>$(GameManaged)/mscorlib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System"><HintPath>$(GameManaged)/System.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.Core"><HintPath>$(GameManaged)/System.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(GameManaged)/UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.Networking"><HintPath>$(GameManaged)/UnityEngine.Networking.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Assembly-CSharp-firstpass"><HintPath>$(GameManaged)/Assembly-CSharp-firstpass.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Brix.Core"><HintPath>$(GameManaged)/Brix.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="brix-common"><HintPath>$(GameManaged)/brix-common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Smooth.Foundations"><HintPath>$(GameManaged)/Smooth.Foundations.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

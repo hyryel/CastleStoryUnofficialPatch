@@ -1,0 +1,5 @@
+is_global = true
+build_property.RootNamespace = BuildGoalFix.Loader
+build_property.ProjectDir = /games/steamapps/common/Castle Story/re/patch/BuildGoalFix.Loader/
+build_property.EnableComHosting = 
+build_property.EnableGeneratedComInterfaceComImportInterop = 

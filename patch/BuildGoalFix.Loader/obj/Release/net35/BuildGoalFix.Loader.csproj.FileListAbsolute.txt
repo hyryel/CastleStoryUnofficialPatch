@@ -1,0 +1,9 @@
+/home/nicolas/castle-story-re/patch/BuildGoalFix.Loader/obj/Release/net35/BuildGoalFix.Loader.csproj.AssemblyReference.cache
+/home/nicolas/castle-story-re/patch/BuildGoalFix.Loader/obj/Release/net35/BuildGoalFix.Loader.GeneratedMSBuildEditorConfig.editorconfig
+/home/nicolas/castle-story-re/patch/BuildGoalFix.Loader/obj/Release/net35/BuildGoalFix.Loader.AssemblyInfoInputs.cache
+/home/nicolas/castle-story-re/patch/BuildGoalFix.Loader/obj/Release/net35/BuildGoalFix.Loader.AssemblyInfo.cs
+/home/nicolas/castle-story-re/patch/BuildGoalFix.Loader/obj/Release/net35/BuildGoalFix.Loader.csproj.CoreCompileInputs.cache
+/home/nicolas/castle-story-re/patch/BuildGoalFix.Loader/bin/Release/net35/CastleStory.BuildGoalFix.Loader.dll
+/home/nicolas/castle-story-re/patch/BuildGoalFix.Loader/bin/Release/net35/CastleStory.BuildGoalFix.Loader.pdb
+/home/nicolas/castle-story-re/patch/BuildGoalFix.Loader/obj/Release/net35/CastleStory.BuildGoalFix.Loader.dll
+/home/nicolas/castle-story-re/patch/BuildGoalFix.Loader/obj/Release/net35/CastleStory.BuildGoalFix.Loader.pdb

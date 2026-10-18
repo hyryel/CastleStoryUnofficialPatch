@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "restore": {
+    "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix.Loader/BuildGoalFix.Loader.csproj": {}
+  },
+  "projects": {
+    "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix.Loader/BuildGoalFix.Loader.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix.Loader/BuildGoalFix.Loader.csproj",
+        "projectName": "CastleStory.BuildGoalFix.Loader",
+        "projectPath": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix.Loader/BuildGoalFix.Loader.csproj",
+        "packagesPath": "/home/nicolas/.nuget/packages/",
+        "outputPath": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix.Loader/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/home/nicolas/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net35"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net35": {
+            "targetAlias": "net35",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net35": {
+          "targetAlias": "net35",
+          "dependencies": {
+            "Microsoft.NETFramework.ReferenceAssemblies": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[1.0.3, )",
+              "autoReferenced": true
+            }
+          },
+          "runtimeIdentifierGraphPath": "/home/nicolas/.dotnet/sdk/8.0.426/RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

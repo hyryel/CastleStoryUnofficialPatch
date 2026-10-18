@@ -1,0 +1,7 @@
+<Module>	class		
+Brix.Legacy.DistantCloudRandomizer	class	UnityEngine.MonoBehaviour	.ctor,generateShape,generateShapeString,getSpriteArray,getSpriteByName
+Brix.Legacy.DistantCloudsPopulator	class	UnityEngine.MonoBehaviour	.ctor,Start,populateDistanceClouds,configureDistantCloud
+Steering	class	UnityEngine.MonoBehaviour	.ctor,FixedUpdate,Seek
+MouseLook	class	UnityEngine.MonoBehaviour	.ctor,Update,Start
+MouseLook/RotationAxes	class	System.Enum	
+TestSceneLoader	class	UnityEngine.MonoBehaviour	.ctor,Start

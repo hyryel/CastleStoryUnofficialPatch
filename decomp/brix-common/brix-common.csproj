@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>brix-common</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <TargetFramework>net35</TargetFramework>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <PropertyGroup />
+  <ItemGroup />
+  <ItemGroup>
+    <Reference Include="System.Core">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/System.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="Smooth.Foundations">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/Smooth.Foundations.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Assembly-CSharp-firstpass</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <TargetFramework>net35</TargetFramework>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <PropertyGroup />
+  <ItemGroup />
+  <ItemGroup>
+    <Reference Include="UnityEngine">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/UnityEngine.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Core">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/System.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/UnityEngine.UI.dll</HintPath>
+    </Reference>
+    <Reference Include="Rewired_Core">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/Rewired_Core.dll</HintPath>
+    </Reference>
+    <Reference Include="Brix.Core">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/Brix.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="Smooth.Foundations">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/Smooth.Foundations.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="MoonSharp.Interpreter">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/MoonSharp.Interpreter.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.Networking">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/UnityEngine.Networking.dll</HintPath>
+    </Reference>
+    <Reference Include="ArabicSupport">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/ArabicSupport.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Xml">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/System.Xml.dll</HintPath>
+    </Reference>
+    <Reference Include="ProMouseDll">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/ProMouseDll.dll</HintPath>
+    </Reference>
+    <Reference Include="brix-common">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/brix-common.dll</HintPath>
+    </Reference>
+    <Reference Include="Mono.Nat">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/Mono.Nat.dll</HintPath>
+    </Reference>
+    <Reference Include="log4net">
+      <HintPath>../../../../../games/steamapps/common/Castle Story/Castle Story_Data/Managed/log4net.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

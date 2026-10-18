@@ -1,0 +1,36 @@
+namespace Brix.Game.Components.Volumes;
+
+public enum VProperty
+{
+	access,
+	obstacle,
+	occupy,
+	walkable,
+	operation,
+	fantome,
+	geostatic,
+	breakableAccess,
+	invincible,
+	natureBlocker,
+	character,
+	treeBase,
+	debloc,
+	path,
+	fallback,
+	stoneSupport,
+	logSupport,
+	braceSupport,
+	beamSupport,
+	plankSupport,
+	mainSupportReq,
+	auxiliarySupportReq,
+	meshSwapTrigger,
+	preventMergeback,
+	deblocTerrain,
+	_unused_25,
+	notWallSupport,
+	canHookBeam,
+	ropeSupport,
+	stickySupport,
+	characterAttackAccess
+}

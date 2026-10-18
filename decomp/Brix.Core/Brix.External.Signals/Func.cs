@@ -1,0 +1,3 @@
+namespace Brix.External.Signals;
+
+public delegate T6 Func<T1, T2, T3, T4, T5, T6>(T1 p1, T2 p2, T3 p3, T4 p4, T5 p5);
