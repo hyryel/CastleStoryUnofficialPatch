@@ -35,6 +35,7 @@ namespace CastleStory.BuildGoalFix
     //          la recherche saute les palettes épuisées au lieu d'échouer sur la plus proche.
     // v1.4 : journal unifié Logistique.log (Journal.cs, clé LogAll) : embauches de tous projets et stations, Tasks,
     //        ramassages/dépôts effectifs, garnottes, échanges, production, dépôt au sol, fin de Task, distances/odomètre.
+    // v1.5 : réservation de capacité des stockages (Storage.cs, clé StorageReserve).
     // Appelé depuis l'IL de Assembly-CSharp-firstpass, réécrit sur disque par BuildGoalFix.Patcher (install.sh).
     public static class Hooks
     {
@@ -59,6 +60,8 @@ namespace CastleStory.BuildGoalFix
         private static readonly bool PickupFilter;
         // v1.4 : journal unifié (Journal.cs).
         private static readonly bool LogAll;
+        // v1.5 : réservation de capacité des stockages (Storage.cs).
+        private static readonly bool StorageReserve;
 
         private static readonly FieldInfo WorkersField =
             typeof(Goal).GetField("workers", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -77,10 +80,15 @@ namespace CastleStory.BuildGoalFix
             LogOrders = cfg["LogOrders"];
             PickupFilter = cfg["PickupFilter"];
             LogAll = cfg["LogAll"];
+            StorageReserve = cfg["StorageReserve"];
             Journal.Enabled = LogAll;
-            Log(string.Format("Hooks v1.4.1 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8}",
-                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll));
+            Storage.Enabled = StorageReserve;
+            Log(string.Format("Hooks v1.5 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8} StorageReserve={9}",
+                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll, StorageReserve));
         }
+
+        // Force le constructeur statique (config) depuis une autre classe de hooks appelée avant Hooks.
+        internal static void EnsureLoaded() { }
 
         public static bool AfterIsMatchFor(bool result, BuildGoal goal, Labor labor, AIErrorsStore errorDestination)
         {
@@ -671,6 +679,7 @@ namespace CastleStory.BuildGoalFix
             {
                 { "FilterIsMatchFor", true }, { "GuardPrepare", true }, { "ProjectLimit", true }, { "ClampPickup", true },
                 { "Verbose", false }, { "LogCapacity", true }, { "LogOrders", true }, { "PickupFilter", true }, { "LogAll", true },
+                { "StorageReserve", true },
             };
             try
             {
@@ -695,7 +704,7 @@ namespace CastleStory.BuildGoalFix
             return cfg;
         }
 
-        private static void LogError(Exception e)
+        internal static void LogError(Exception e)
         {
             if (_errorLogged) return;
             _errorLogged = true;

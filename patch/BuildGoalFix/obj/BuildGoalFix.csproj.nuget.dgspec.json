@@ -1,29 +1,37 @@
 {
   "format": 1,
   "restore": {
-    "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix/BuildGoalFix.csproj": {}
+    "E:\\SteamLibrary\\steamapps\\common\\Castle Story\\re\\patch\\BuildGoalFix\\BuildGoalFix.csproj": {}
   },
   "projects": {
-    "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix/BuildGoalFix.csproj": {
+    "E:\\SteamLibrary\\steamapps\\common\\Castle Story\\re\\patch\\BuildGoalFix\\BuildGoalFix.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix/BuildGoalFix.csproj",
+        "projectUniqueName": "E:\\SteamLibrary\\steamapps\\common\\Castle Story\\re\\patch\\BuildGoalFix\\BuildGoalFix.csproj",
         "projectName": "CastleStory.BuildGoalFix",
-        "projectPath": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix/BuildGoalFix.csproj",
-        "packagesPath": "/home/nicolas/.nuget/packages/",
-        "outputPath": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix/obj/",
+        "projectPath": "E:\\SteamLibrary\\steamapps\\common\\Castle Story\\re\\patch\\BuildGoalFix\\BuildGoalFix.csproj",
+        "packagesPath": "D:\\Users2026\\Hyryel\\.nuget\\packages\\",
+        "outputPath": "E:\\SteamLibrary\\steamapps\\common\\Castle Story\\re\\patch\\BuildGoalFix\\obj\\",
         "projectStyle": "PackageReference",
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
         "configFilePaths": [
-          "/home/nicolas/.nuget/NuGet/NuGet.Config"
+          "D:\\Users2026\\Hyryel\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
           "net35"
         ],
         "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "C:\\Program Files\\dotnet\\library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
           "net35": {
+            "framework": "net35",
             "targetAlias": "net35",
             "projectReferences": {}
           }
@@ -37,10 +45,12 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "10.0.300"
       },
       "frameworks": {
         "net35": {
+          "framework": "net35",
           "targetAlias": "net35",
           "dependencies": {
             "Microsoft.NETFramework.ReferenceAssemblies": {
@@ -50,7 +60,7 @@
               "autoReferenced": true
             }
           },
-          "runtimeIdentifierGraphPath": "/home/nicolas/.dotnet/sdk/8.0.426/RuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.302\\RuntimeIdentifierGraph.json"
         }
       }
     }

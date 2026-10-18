@@ -3,7 +3,7 @@
     <TargetFramework>net35</TargetFramework>
     <AssemblyName>CastleStory.BuildGoalFix.Loader</AssemblyName>
     <LangVersion>7.3</LangVersion>
-    <GameManaged>/games/steamapps/common/Castle Story/Castle Story_Data/Managed</GameManaged>
+    <GameManaged Condition="'$(GameManaged)' == ''">/games/steamapps/common/Castle Story/Castle Story_Data/Managed</GameManaged>
     <FrameworkPathOverride>$(GameManaged)</FrameworkPathOverride>
     <NoStdLib>true</NoStdLib>
     <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>

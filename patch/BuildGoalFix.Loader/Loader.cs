@@ -243,7 +243,35 @@ namespace CastleStory.BuildGoalFix
             Entry(module, journal, "Brix.Game.Semantique.Recepteur", "DropAll", 0, "OnDropAll", true);
             Entry(module, journal, "Brix.Game.AI.Task", "OnFinally", 0, "OnTaskEnd", true);
 
-            Log(string.Format("IsMatchFor : {0} ret patché(s) ; GetPrepareFunction : {1} ret patché(s) ; TakeSome, EndWork, _GoPickUp, TakeFromEnumerable, ClosestObjectToPickup : entrée patchée ; _ClosestObjectToPickup_Test : {2} ret ; FindOneResource : {3} ret ; journal : Project.Hire {4} ret, IOperableExtender.Hire {5} ret, StoreEverything {6} ret + entrées SendOrder, AbsorbGarnottes, OperationSwitchTask, Recipe.Finish, DropAll, Task.OnFinally", a, b, e, f, j1, j2, j4));
+            // ----- v1.5 : réservation de capacité des stockages (classe Storage) -----
+            var storage = new TypeReference(HooksAssembly, "Storage", module, asmRef);
+            // K : entrée de Knowledge.ClosestStorageWithRoomFor(source, item, faction) → Storage.BeginSearch(...)
+            Entry(module, storage, "Brix.Game.AI.KnowledgeSpace.Knowledge", "ClosestStorageWithRoomFor", 3, "BeginSearch", false);
+            // L : return Storage.AfterTest(result, gc, item) sur chaque ret de _ClosestStorageWithRoomFor_Test
+            int l = WrapRet(module, storage, "Brix.Game.AI.KnowledgeSpace.Knowledge", "_ClosestStorageWithRoomFor_Test", 2, "AfterTest", false);
+            // M : StoreNode.GoStoreIn(labor, contenant) → contenant = Storage.OnGoStoreIn(labor, contenant) en entrée
+            MethodDefinition goStore = Find(module, "Brix.Game.AI.Nodes.StoreNode", "GoStoreIn", 2);
+            var onGoStore = new MethodReference("OnGoStoreIn", goStore.Parameters[1].ParameterType, storage);
+            onGoStore.Parameters.Add(new ParameterDefinition(goStore.Parameters[0].ParameterType));
+            onGoStore.Parameters.Add(new ParameterDefinition(goStore.Parameters[1].ParameterType));
+            goStore.Body.SimplifyMacros();
+            ILProcessor mp = goStore.Body.GetILProcessor();
+            Instruction mFirst = goStore.Body.Instructions[0];
+            foreach (Instruction ins in new[]
+            {
+                mp.Create(OpCodes.Ldarg, goStore.Parameters[0]),
+                mp.Create(OpCodes.Ldarg, goStore.Parameters[1]),
+                mp.Create(OpCodes.Call, onGoStore),
+                mp.Create(OpCodes.Starg, goStore.Parameters[1]),
+            })
+                mp.InsertBefore(mFirst, ins);
+            goStore.Body.OptimizeMacros();
+            // N : Storage.AfterStore(from, into, upTo) sur chaque ret de Transaction.StoreEverything
+            int n = WrapRetVoid(module, storage, "Brix.Game.AI.Transaction", "StoreEverything", 3, "AfterStore", false);
+            // O : entrée de Task.OnFinally → Storage.OnTaskEnd(this)
+            Entry(module, storage, "Brix.Game.AI.Task", "OnFinally", 0, "OnTaskEnd", true);
+
+            Log(string.Format("IsMatchFor : {0} ret patché(s) ; GetPrepareFunction : {1} ret patché(s) ; TakeSome, EndWork, _GoPickUp, TakeFromEnumerable, ClosestObjectToPickup : entrée patchée ; _ClosestObjectToPickup_Test : {2} ret ; FindOneResource : {3} ret ; journal : Project.Hire {4} ret, IOperableExtender.Hire {5} ret, StoreEverything {6} ret + entrées SendOrder, AbsorbGarnottes, OperationSwitchTask, Recipe.Finish, DropAll, Task.OnFinally ; stockage : _ClosestStorageWithRoomFor_Test {7} ret, StoreEverything {8} ret + entrées ClosestStorageWithRoomFor, GoStoreIn, Task.OnFinally", a, b, e, f, j1, j2, j4, l, n));
         }
 
         private static MethodDefinition Find(ModuleDefinition module, string type, string name, int paramCount)

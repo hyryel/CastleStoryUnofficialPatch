@@ -1,11 +1,11 @@
 {
   "version": 2,
-  "dgSpecHash": "93cEyo1CIg8=",
+  "dgSpecHash": "+2PBkIIIEH4=",
   "success": true,
-  "projectFilePath": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix/BuildGoalFix.csproj",
+  "projectFilePath": "E:\\SteamLibrary\\steamapps\\common\\Castle Story\\re\\patch\\BuildGoalFix\\BuildGoalFix.csproj",
   "expectedPackageFiles": [
-    "/home/nicolas/.nuget/packages/microsoft.netframework.referenceassemblies/1.0.3/microsoft.netframework.referenceassemblies.1.0.3.nupkg.sha512",
-    "/home/nicolas/.nuget/packages/microsoft.netframework.referenceassemblies.net35/1.0.3/microsoft.netframework.referenceassemblies.net35.1.0.3.nupkg.sha512"
+    "D:\\Users2026\\Hyryel\\.nuget\\packages\\microsoft.netframework.referenceassemblies\\1.0.3\\microsoft.netframework.referenceassemblies.1.0.3.nupkg.sha512",
+    "D:\\Users2026\\Hyryel\\.nuget\\packages\\microsoft.netframework.referenceassemblies.net35\\1.0.3\\microsoft.netframework.referenceassemblies.net35.1.0.3.nupkg.sha512"
   ],
   "logs": []
 }

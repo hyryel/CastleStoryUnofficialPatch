@@ -231,3 +231,20 @@ Défauts du journal corrigés en v1.4.1 : `RAMASSE` lisait la source après le t
 ### Proposition v1.5 (cible n° 1 : stockage)
 
 Réservation de capacité à la décision de stockage : hook en entrée de `StoreNode.GoStoreIn(labor, contenant)` → `Pending[contenant] += charge du Brictron` jusqu'à son `WorkEnded` (même mécanisme que `KnowledgeReserver`), et hook sur le `ret` de `Knowledge._ClosestStorageWithRoomFor_Test(gc, item)` → refus si `CanFitUpTo(clé) − Pending ≤ 0`. Option : exiger de la place pour toute la charge quand un autre stockage en a. Attendu : `StorageBecameFull` ≈ 0, −400 m par session équivalente.
+
+## 9. v1.5 volet A : réservation de capacité des stockages (2026-10-18)
+
+Classe `Storage` (`patch/BuildGoalFix/Storage.cs`), clé `StorageReserve` (défaut true). Stockage = `Recepteur.Fonction == entrepot` (Palette, Toolrack). État serveur, non sérialisé.
+
+| Hook IL | Point | Effet |
+|---|---|---|
+| K | entrée `Knowledge.ClosestStorageWithRoomFor(source, item, faction)` | mémorise le chercheur |
+| L | ret de `Knowledge._ClosestStorageWithRoomFor_Test(gc, item)` | refus si `place libre − réservations des autres ≤ 0` ; place = `CurrentCapacity.Value(ressource)/valeur de l'objet`, bornée par l'`Encombrement` si le stockage en a ; non calculable (type absent de la capacité, ex. outils) → vanilla |
+| M | entrée `StoreNode.GoStoreIn(labor, contenant)` (remplaçant) | stockage déjà couvert par les réservations (cible issue du cache `bestRecepteurCache`) → recherche fraîche (K+L), sinon cible d'origine ; puis réserve la charge du Brictron (ressource principale du 1er objet du sac). Journal : `STOCK_REDIRIGE` |
+| N | ret de `Transaction.StoreEverything(from, into, upTo)` | dépôt d'un Brictron → libère sa réservation sur `into` |
+| O | entrée `Task.OnFinally` | libère la réservation posée pendant cette Task |
+
+Expiration : 90 s, Brictron détruit, ou sac sans la ressource réservée. Une réservation par Brictron (la nouvelle remplace l'ancienne).
+Effet de bord voulu : `StorableGoal.CouldStore`, `CleanUpGoal.IsMatchFor`, `Project.VerifyWorkFor`, `CraftingStation.CanStore` passent par L : un Brictron n'est plus embauché pour creuser/récolter/nettoyer si tous les stockages sont déjà couverts par des Brictron en route.
+Non fait (option du §8) : exiger la place pour toute la charge quand un autre stockage l'a ; un dépôt partiel reste possible (vanilla : `GoStoreInBestStorage` boucle jusqu'au sac vide).
+Vérification hors jeu : métadonnées identiques à l'original ; les 25 appels injectés vers `CastleStory.BuildGoalFix` résolus (Cecil `Resolve`).

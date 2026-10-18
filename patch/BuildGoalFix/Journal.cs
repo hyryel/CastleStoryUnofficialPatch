@@ -323,6 +323,18 @@ namespace CastleStory.BuildGoalFix
             catch (Exception e) { Error(e); }
         }
 
+        // v1.5 : événement de Storage (STOCK_REDIRIGE…).
+        public static void StorageEvent(Labor l, string evt, string details, GameObject dest)
+        {
+            try
+            {
+                if (!Enabled || l == null) return;
+                Log(string.Format("{0} [{1}] {2} ; {3} ; d={4} ; pos={5} ; tache={6}",
+                    evt, OrderOf(l, l.CurrentTask), l.name, details, Dist(l, dest), Pos(l), TaskOf(l)));
+            }
+            catch (Exception e) { Error(e); }
+        }
+
         // Étendue d'un ordre : distance max entre deux Blueprints, et centre (pour les ordres multiples éloignés).
         public static string Extent(List<BuildGoal> goals)
         {

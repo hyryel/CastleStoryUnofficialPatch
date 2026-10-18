@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "targets": {
     "net8.0": {}
   },
@@ -8,28 +8,37 @@
     "net8.0": []
   },
   "packageFolders": {
-    "/home/nicolas/.nuget/packages/": {}
+    "D:\\Users2026\\Hyryel\\.nuget\\packages\\": {},
+    "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix.Patcher/BuildGoalFix.Patcher.csproj",
+      "projectUniqueName": "E:\\SteamLibrary\\steamapps\\common\\Castle Story\\re\\patch\\BuildGoalFix.Patcher\\BuildGoalFix.Patcher.csproj",
       "projectName": "BuildGoalFix.Patcher",
-      "projectPath": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix.Patcher/BuildGoalFix.Patcher.csproj",
-      "packagesPath": "/home/nicolas/.nuget/packages/",
-      "outputPath": "/games/steamapps/common/Castle Story/re/patch/BuildGoalFix.Patcher/obj/",
+      "projectPath": "E:\\SteamLibrary\\steamapps\\common\\Castle Story\\re\\patch\\BuildGoalFix.Patcher\\BuildGoalFix.Patcher.csproj",
+      "packagesPath": "D:\\Users2026\\Hyryel\\.nuget\\packages\\",
+      "outputPath": "E:\\SteamLibrary\\steamapps\\common\\Castle Story\\re\\patch\\BuildGoalFix.Patcher\\obj\\",
       "projectStyle": "PackageReference",
+      "fallbackFolders": [
+        "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+      ],
       "configFilePaths": [
-        "/home/nicolas/.nuget/NuGet/NuGet.Config"
+        "D:\\Users2026\\Hyryel\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
       ],
       "originalTargetFrameworks": [
         "net8.0"
       ],
       "sources": {
+        "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+        "C:\\Program Files\\dotnet\\library-packs": {},
         "https://api.nuget.org/v3/index.json": {}
       },
       "frameworks": {
         "net8.0": {
+          "framework": "net8.0",
           "targetAlias": "net8.0",
           "projectReferences": {}
         }
@@ -46,10 +55,12 @@
         "enableAudit": "true",
         "auditLevel": "low",
         "auditMode": "direct"
-      }
+      },
+      "SdkAnalysisLevel": "10.0.300"
     },
     "frameworks": {
       "net8.0": {
+        "framework": "net8.0",
         "targetAlias": "net8.0",
         "imports": [
           "net461",
@@ -67,7 +78,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "/home/nicolas/.dotnet/sdk/8.0.426/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.302/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

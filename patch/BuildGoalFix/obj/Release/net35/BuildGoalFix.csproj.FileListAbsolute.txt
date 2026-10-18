@@ -7,3 +7,13 @@
 /home/nicolas/castle-story-re/patch/BuildGoalFix/obj/Release/net35/BuildGoalFix.csproj.CoreCompileInputs.cache
 /home/nicolas/castle-story-re/patch/BuildGoalFix/obj/Release/net35/CastleStory.BuildGoalFix.dll
 /home/nicolas/castle-story-re/patch/BuildGoalFix/obj/Release/net35/CastleStory.BuildGoalFix.pdb
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\bin\Release\net35\CastleStory.BuildGoalFix.dll
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\bin\Release\net35\CastleStory.BuildGoalFix.pdb
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\obj\Release\net35\BuildGoalFix.csproj.AssemblyReference.cache
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\obj\Release\net35\BuildGoalFix.GeneratedMSBuildEditorConfig.editorconfig
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\obj\Release\net35\BuildGoalFix.AssemblyInfoInputs.cache
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\obj\Release\net35\BuildGoalFix.AssemblyInfo.cs
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\obj\Release\net35\BuildGoalFix.csproj.CoreCompileInputs.cache
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\obj\Release\net35\BuildGoalFix.sourcelink.json
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\obj\Release\net35\CastleStory.BuildGoalFix.dll
+E:\SteamLibrary\steamapps\common\Castle Story\re\patch\BuildGoalFix\obj\Release\net35\CastleStory.BuildGoalFix.pdb
