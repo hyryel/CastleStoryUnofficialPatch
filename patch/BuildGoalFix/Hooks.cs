@@ -41,6 +41,10 @@ namespace CastleStory.BuildGoalFix
     //        par des appels (DelayOnFail, DelayOnFinished, LookForWorkTicks), Labor._tickOffset 2 → 1.
     // v1.6 : ordre de construction (BuildOrder.cs, clés BuildReach / BuildPlan) : Blueprint inaccessible ou dont la
     //        pose couperait l'accès d'un autre → non attribué ; bonus de priorité de l'intérieur vers l'extérieur.
+    // v1.9 : ordre de construction global (BuildPlanCore.cs) : plan prouvé jusqu'à l'état final, Blueprints impossibles
+    //        sans escalier signalés et jamais attribués, garde exacte à l'attribution ; calcul sans gel (voir BuildOrder.cs).
+    // v1.9.2 : un Brictron inactif (Activity.Chilling) traverse les Brictron alliés comme un Brictron au travail
+    //          (clé PassThroughIdle, hook T sur Builder.CanPassThrough).
     // Appelé depuis l'IL de Assembly-CSharp-firstpass, réécrit sur disque par BuildGoalFix.Patcher (install.sh).
     public static class Hooks
     {
@@ -74,6 +78,8 @@ namespace CastleStory.BuildGoalFix
         private static readonly bool FastThinking;
         // v1.8 : palettes, compléter avant d'entamer (Storage.cs).
         private static readonly bool CompleteFirst;
+        // v1.9.2 : Brictron inactifs traversent les alliés (Builder.CanPassThrough).
+        private static readonly bool PassThroughIdle;
 
         private static readonly FieldInfo WorkersField =
             typeof(Goal).GetField("workers", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -97,14 +103,15 @@ namespace CastleStory.BuildGoalFix
             BuildPlan = cfg["BuildPlan"];
             FastThinking = cfg["FastThinking"];
             CompleteFirst = cfg["CompleteFirst"];
+            PassThroughIdle = cfg["PassThroughIdle"];
             Storage.CompleteFirst = CompleteFirst;
             if (FastThinking) SetTickOffset(1);
             Journal.Enabled = LogAll;
             Storage.Enabled = StorageReserve;
             BuildOrder.ReachEnabled = BuildReach;
             BuildOrder.PlanEnabled = BuildPlan;
-            Log(string.Format("Hooks v1.8 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8} StorageReserve={9} BuildReach={10} BuildPlan={11} FastThinking={12} CompleteFirst={13}",
-                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll, StorageReserve, BuildReach, BuildPlan, FastThinking, CompleteFirst));
+            Log(string.Format("Hooks v1.9.2 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8} StorageReserve={9} BuildReach={10} BuildPlan={11} FastThinking={12} CompleteFirst={13} PassThroughIdle={14}",
+                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll, StorageReserve, BuildReach, BuildPlan, FastThinking, CompleteFirst, PassThroughIdle));
         }
 
         // --- v1.7 : délais de réflexion (ticks de 20 ms) ; appelés depuis l'IL à la place des constantes vanilla ---
@@ -113,6 +120,15 @@ namespace CastleStory.BuildGoalFix
         public static int DelayOnFinished() { return FastThinking ? 4 : 10; }
         // Labor.LookForWorkSequence (2 attentes) et période de la séquence dans Labor.Initialize (vanilla 10).
         public static int LookForWorkTicks() { return FastThinking ? 4 : 10; }
+
+        // --- v1.9.2 : T, sur chaque ret de Builder.CanPassThrough (appelé à chaque recherche de chemin et à chaque pas bloqué) ---
+        // Vanilla : Activity != Fighting && Activity != Chilling && (IsWorker() || hackedDigGoal libéré). Un Brictron qui flâne
+        // (Chilling : errance, assis au ralliement) ne traverse donc pas les alliés et échoue face à un Brictron immobile.
+        // Ici, Chilling traverse aussi ; le combat (Fighting) et les ennemis/neutres (test d'alliance de VoxelPresence) inchangés.
+        public static bool AfterCanPassThrough(bool result, Labor labor)
+        {
+            return result || (PassThroughIdle && labor != null && labor.Activity == Activity.Chilling);
+        }
 
         // Labor._tickOffset (vanilla 2) : décalage entre Brictron qui cherchent du travail au même tick
         // (OffsetWaitTime = (n % 8) * _tickOffset + 1, soit 1 à 15 ticks en vanilla, 1 à 8 avec 1).
@@ -149,6 +165,7 @@ namespace CastleStory.BuildGoalFix
             try
             {
                 if (LogCapacity) LogCapacityOnce(goal);
+                if (BuildReach) BuildOrder.SeeLabor(labor);      // v1.9 : registre des Brictron sans FindObjectsOfType
                 if (!result) return result;
                 // v1.6 : Blueprint inaccessible, ou dont la pose couperait l'accès d'un autre.
                 string why;
@@ -198,6 +215,7 @@ namespace CastleStory.BuildGoalFix
                 bool hired;
                 try { hired = original(labor); }
                 finally { Journal.CurrentGoal = null; }
+                if (hired && build != null && BuildReach) BuildOrder.OnHired(build);   // v1.9 : état du plan changé
                 if (hired && build != null && LogOrders) LogHire(build, labor as Labor);
                 return hired;
             };
@@ -746,7 +764,7 @@ namespace CastleStory.BuildGoalFix
                 { "FilterIsMatchFor", true }, { "GuardPrepare", true }, { "ProjectLimit", true }, { "ClampPickup", true },
                 { "Verbose", false }, { "LogCapacity", true }, { "LogOrders", true }, { "PickupFilter", true }, { "LogAll", true },
                 { "StorageReserve", true }, { "BuildReach", true }, { "BuildPlan", true },
-                { "FastThinking", true }, { "CompleteFirst", true },
+                { "FastThinking", true }, { "CompleteFirst", true }, { "PassThroughIdle", true },
             };
             try
             {

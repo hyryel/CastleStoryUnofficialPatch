@@ -10,37 +10,35 @@ using UnityEngine;
 
 namespace CastleStory.BuildGoalFix
 {
-    // v1.6 : ordre de construction d'un projet (BuildGoalProvider).
-    // Constat : un Brictron pose un bloc qui coupe le chemin vers le Blueprint d'un autre (PathExecutionFailed
-    // après un long trajet). Vanilla ordonne seulement par hauteur et distance, Brictron par Brictron.
+    // Ordre de construction d'un projet (BuildGoalProvider) : adaptateur Unity du plan (BuildPlanCore.cs).
     //
-    // Modèle (06 §10) : grille locale autour du projet. Case « debout » p (comme Voxel.IsOpenAndWalkable) :
-    // p+1 vide, et p en pente ou p vide sur p-1 plein ; pas d'arbre/blocage nature ; volume « walkable » admis.
-    // Déplacement : 4 voisins, même hauteur sinon ±1 voxel (TerrainPathNode.AddNeighborBranches).
-    // Les cases « fantome » d'un Blueprint deviennent pleines une fois construit (portes exclues : passables).
-    // R(S) = cases debout reliées au bord de la zone (= au reste du monde) dans l'état S.
-    //
-    // Étape 1 (garde, clé BuildReach) :
-    //   (a) accès : un Blueprint est « accessible » si une de ses cases d'accès est dans R(actuel). Informatif
-    //       seulement (journal) : le modèle ignore les échelles, et vanilla vérifie déjà l'accès réel au choix
-    //       (BuildGoalFinder) ; refuser sur le modèle pourrait bloquer un Blueprint atteignable.
-    //   (b) non-coupure : un Blueprint X n'est pas attribué si le construire retire de R
-    //       - toutes les cases d'accès d'un autre Blueprint du projet accessible aujourd'hui ;
-    //       - la case d'un Brictron qui est aujourd'hui dans R (v1.6.1 : Brictron enfermés à l'étage) ;
-    //       - toutes ses propres cases d'accès (celui qui pose resterait enfermé).
-    //   Un Brictron inactif qui serait enfermé reçoit un ordre de redescendre vers le bord (v1.6.1).
-    //   Sécurités : si aucun Blueprint n'est accessible (modèle en défaut) ou si tous les accessibles coupent
-    //   quelque chose (blocage mutuel), le contrôle est levé pour le projet jusqu'au prochain calcul.
-    // Étape 2 (plan, clé BuildPlan) : bonus de priorité « de l'intérieur vers l'extérieur » : profondeur des
-    //   cases d'accès (distance au bord) dans l'état final (tous les Blueprints construits) ; un Blueprint
-    //   inaccessible dans l'état final (pièce fermée) passe en tête. Bonus ajouté à BuildGoal.PriorityFor.
-    // Calcul par projet, mis en cache : refait si la liste des Blueprints change ou au bout de Refresh secondes.
-    // v1.6.2 : victimes protégées étendues aux Blueprints pas encore constructibles du projet (rangées du dessus,
-    //          BuildGoalProvider.TrackedBlueprints), évalués dans l'état « rangées du dessous posées » ; Blueprints
-    //          déjà attribués (Task vivante) comptés comme posés ; registre des Brictron sans FindObjectsOfType
-    //          à chaque calcul (≈ 40 ms).
-    // v1.6.1 : carte des cases debout précalculée une fois par calcul ; un test de coupure ne réévalue que les
-    //          cases touchées par la pose (parcours sur index) : 647 ms → quelques ms (gel régulier du jeu).
+    // v1.6   : refus d'un Blueprint dont la pose couperait l'accès d'un autre ; bonus « intérieur d'abord ».
+    // v1.6.1 : Brictron protégés (pas d'enfermement, poseur compris), évacuation des inactifs menacés.
+    // v1.6.2 : Blueprints futurs (TrackedBlueprints) protégés dans l'état « rangées du dessous posées ».
+    //          Échec en jeu (v1.8, tour de 4 rangées) : évalués dans cet état ils étaient déjà inaccessibles, donc
+    //          jamais protégés ; une règle locale ne suffit pas.
+    // v1.9   : plan global prouvé de l'état actuel à l'état final (BuildPlanCore, validé hors jeu sur la batterie
+    //          patch/verify/buildsim, portage C# comparé instantané par instantané) :
+    //          - tous les Blueprints commités du projet (constructibles et futurs) sont planifiés ensemble, par
+    //            groupe (Blueprints dont les grilles se touchent ; groupes éloignés planifiés séparément) ;
+    //          - pelage à rebours : l'ordre existe, ou les Blueprints impossibles sans escalier/appui sont SIGNALÉS
+    //            (journal « NON CONSTRUCTIBLE ») et jamais attribués ; rien n'est ajouté à la place du joueur ;
+    //          - garde exacte à l'attribution : X posé maintenant, le poseur ressort (maintenant et après les poses
+    //            en cours), les attribués restent accessibles, aucun Brictron relié n'est enfermé (positions relues
+    //            à chaque frame) et le reste du plan reste faisable ;
+    //          - formes réelles (accès −2..+1 autour des cases, support, MaxMissingSupport) lues dans le Blueprint ;
+    //          - Blueprints inaccessibles refusés (plus de trajets perdus en PathExecutionFailed) ;
+    //          - coût : grilles réutilisées, lecture des voxels étalée sur plusieurs frames au-delà de 12 000 cases et
+    //            relue en continu par tranches, aucune allocation dans les parcours, plus de FindObjectsOfType
+    //            (Brictron vus par IsMatchFor et Labor.LaborStarted), tests limités à 2 ms par frame ;
+    //          - sécurité : 10 s sans aucune autorisation ni pose en cours alors qu'il reste un Blueprint non signalé
+    //            → contrôle levé pour ce groupe jusqu'au prochain changement (journalisé).
+    // v1.9.1 : échec en jeu (tour 6×6, journal buildgoalfix-2026-10-19-v1.9.log) : une brique posée quittait la liste
+    //          avant que son bloc soit lisible ; la brique du dessus passait « sans support », exclusion retenue
+    //          (Sticky) puis propagée vers le haut. Correctif (scénarios reel_v19_tour5_* du simulateur) :
+    //          - « sans support » recalculé à chaque calcul, jamais retenu (Sticky = « inaccessible » seulement) ;
+    //          - Blueprint attribué disparu = posé : ses cases comptent pleines (Pending) jusqu'à ce que la grille
+    //            les voie (ou PendingSeconds).
     public static class BuildOrder
     {
         public static bool ReachEnabled;
@@ -49,65 +47,169 @@ namespace CastleStory.BuildGoalFix
         private const float Refresh = 3f;
         private const int Margin = 6, MarginDown = 3, MarginUp = 4;
         private const int MaxCells = 600000;
-        private const int BonusPerStep = 3, MaxDepthSteps = 20;
+        private const int SliceCells = 12000;          // au-delà : lecture des voxels étalée sur plusieurs frames
+        private const double ReadBudgetMs = 2.0;       // lecture initiale des grilles, par frame (tous projets)
+        private const double RefreshBudgetMs = 0.1;    // relecture continue, par frame et par groupe
+        private const double TestBudgetMs = 2.0;       // tests d'attribution, par frame (tous projets)
+        private const float ValveSeconds = 10f;
         private const float EvacuateEvery = 8f;
+        private const float PendingSeconds = 5f;       // v1.9.1 : pose comptée pleine au plus 5 s avant d'être lue
 
         static BuildOrder() { Hooks.EnsureLoaded(); }
 
-        private sealed class GoalInfo
+        // Forme d'un Blueprint (positions monde), lue une fois.
+        private sealed class Shape
         {
-            public BuildGoal Goal;
-            public List<XYZ> Cells = new List<XYZ>();   // deviennent pleines (vide pour une porte)
-            public List<XYZ> Access = new List<XYZ>();
-            public bool Reach;
-            public bool Future;     // pas encore constructible (support absent) : victime seulement
-            public bool InFlight;   // Task vivante : compté comme posé
+            public XYZ[] Cells;
+            public byte[] Kind;
+            public XYZ[] Access;
+            public XYZ[] Support;
+            public bool SupportAny;
+            public int MaxMissing;
             public int MinY;
-            public bool Allowed = true;
-            public string CutVictim;
-            public int Bonus;
+            public int X0, Y0, Z0, X1, Y1, Z1;   // emprise (cases + accès)
+        }
+
+        // v1.9.1 : Blueprint attribué disparu (posé) dont la grille n'a pas encore lu les cases.
+        private sealed class PendingPose
+        {
+            public Shape S;
+            public float Time;
+        }
+
+        // Groupe de Blueprints planifiés ensemble (une grille, un plan).
+        private sealed class Cluster
+        {
+            public readonly BuildPlanCore Core = new BuildPlanCore();
+            public readonly List<BuildGoal> Goals = new List<BuildGoal>();
+            public readonly Dictionary<BuildGoal, int> Index = new Dictionary<BuildGoal, int>();
+            public long Signature = long.MinValue;
+            public float Time = -100f;
+            public bool HasCore, Ready, TooLarge, NeedsCompute, Used;
+            public int BuildCursor, RefreshCursor;
+            public int GridX0, GridY0, GridZ0, GridX1, GridY1, GridZ1;
+            public float LastOk;
+            public float LastEvacuation = -100f;
+            public double Ms;
+            public int Gc;
+            public int Fast;                 // mises à jour par voie rapide depuis le dernier journal
         }
 
         private sealed class Plan
         {
-            public string Signature;
-            public float Time;
-            public int Frame;
-            public bool Disabled;
-            public string Note = "";
-            public long Ms;
-            public Dictionary<BuildGoal, GoalInfo> Infos = new Dictionary<BuildGoal, GoalInfo>();
+            public readonly List<Cluster> Clusters = new List<Cluster>();
+            public readonly Dictionary<BuildGoal, Cluster> Where = new Dictionary<BuildGoal, Cluster>();
+            public readonly Dictionary<int, string> Sticky = new Dictionary<int, string>();   // exclusions « inaccessible » retenues
+            public readonly List<PendingPose> Pending = new List<PendingPose>();               // v1.9.1 : posés pas encore lus
+            public readonly HashSet<int> Known = new HashSet<int>();
+            public readonly List<BuildGoal> Previous = new List<BuildGoal>();
+            public long Signature = long.MinValue;
+            public float Time = -100f;
+            public int Frame = -1;
+            public bool Dirty;
             public string LoggedState;
+            public string LoggedExcluded;
         }
 
         private static readonly Dictionary<BuildGoalProvider, Plan> Plans = new Dictionary<BuildGoalProvider, Plan>();
+        private static readonly Dictionary<BuildGoal, Shape> Shapes = new Dictionary<BuildGoal, Shape>();
         private static readonly Dictionary<Labor, float> LastEvacuation = new Dictionary<Labor, float>();
-        private static float _laborsTime = -100f;
+        private static readonly List<BuildGoal> Scratch = new List<BuildGoal>();
+        private static readonly List<Cluster> FreeClusters = new List<Cluster>();
+        private static readonly List<Cluster> OldClusters = new List<Cluster>();
+        private static int[] _parent = new int[0], _next = new int[0], _head = new int[0];
+        private static int _budgetFrame = -1;
+        private static long _testTicks, _readTicks;
 
         // --- API pour les hooks ---
 
-        // Vrai si le Blueprint peut être attribué maintenant (étape 1). reason : motif du refus.
+        // Vrai si le Blueprint peut être attribué maintenant. reason : motif du refus.
         public static bool Allowed(BuildGoal goal, out string reason)
         {
             reason = null;
             if (!ReachEnabled || goal == null || goal.IsAnti || goal.Provider == null) return true;
             Plan plan = GetPlan(goal);
-            GoalInfo info;
-            if (plan == null || plan.Disabled || !plan.Infos.TryGetValue(goal, out info)) return true;
-            if (!info.Allowed) { reason = "couperait l'accès de " + info.CutVictim; return false; }
-            return true;
+            Cluster cl;
+            if (plan == null || !plan.Where.TryGetValue(goal, out cl) || cl.TooLarge) return true;
+            if (!cl.HasCore)
+            {
+                reason = "plan en calcul";
+                return false;
+            }
+            int idx;
+            BuildPlanCore core = cl.Core;
+            if (core.Disabled || !cl.Index.TryGetValue(goal, out idx)) return true;
+            if (!core.IsCached(idx))
+            {
+                // Tests limités par frame : au-delà, réponse différée (refus non mémorisé, retenté plus tard).
+                NewBudgetFrame();
+                if (_testTicks * 1000.0 / Stopwatch.Frequency > TestBudgetMs)
+                {
+                    reason = "calcul en cours";
+                    return false;
+                }
+                long t0 = Stopwatch.GetTimestamp();
+                bool r = core.Allowed(idx, out reason);
+                _testTicks += Stopwatch.GetTimestamp() - t0;
+                if (!r && core.Threatened.Count > 0) Evacuate(cl);
+                return Check(plan, cl, r);
+            }
+            bool ok = core.Allowed(idx, out reason);
+            if (!ok && core.Threatened.Count > 0) Evacuate(cl);
+            return Check(plan, cl, ok);
         }
 
-        // Ret de BuildGoal.PriorityFor : bonus du plan (étape 2).
+        private static void NewBudgetFrame()
+        {
+            int frame = UnityEngine.Time.frameCount;
+            if (frame == _budgetFrame) return;
+            _budgetFrame = frame;
+            _testTicks = 0;
+            _readTicks = 0;
+        }
+
+        // Sécurité : rien d'autorisé depuis ValveSeconds, aucune pose en cours, mais un Blueprint non signalé reste.
+        private static bool Check(Plan plan, Cluster cl, bool ok)
+        {
+            float now = UnityEngine.Time.time;
+            BuildPlanCore core = cl.Core;
+            if (ok) { cl.LastOk = now; return true; }
+            bool inFlight = false, open = false;
+            foreach (PlanGoal g in core.Infos)
+            {
+                if (g.Placed) continue;
+                if (g.InFlight) { inFlight = true; break; }
+                if (!g.Excluded) open = true;
+            }
+            if (inFlight || !open) { cl.LastOk = now; return false; }
+            if (now - cl.LastOk > ValveSeconds)
+            {
+                core.Disabled = true;
+                Hooks.LogLine(string.Format("{0} plan : aucune attribution possible depuis {1:0} s, contrôle levé pour {2} Blueprint(s) jusqu'au prochain changement",
+                    cl.Goals.Count > 0 ? Hooks.OrderTagOf(cl.Goals[0]) : "[Ordre ?]", ValveSeconds, cl.Goals.Count));
+                return true;
+            }
+            return false;
+        }
+
+        // Après Hire (WrapPrepare) : l'état change (Blueprint attribué), recalcul au prochain appel même dans la frame.
+        public static void OnHired(BuildGoal goal)
+        {
+            Plan plan;
+            if (goal != null && goal.Provider != null && Plans.TryGetValue(goal.Provider, out plan)) plan.Dirty = true;
+        }
+
+        // Ret de BuildGoal.PriorityFor : bonus « intérieur d'abord ».
         public static int AfterPriority(int result, BuildGoal goal, Labor labor, ref float time)
         {
             try
             {
                 if (!PlanEnabled || goal == null || goal.IsAnti || goal.Provider == null) return result;
                 Plan plan = GetPlan(goal);
-                GoalInfo info;
-                if (plan == null || !plan.Infos.TryGetValue(goal, out info)) return result;
-                return result + info.Bonus;
+                Cluster cl;
+                int idx;
+                if (plan == null || !plan.Where.TryGetValue(goal, out cl) || !cl.HasCore || !cl.Index.TryGetValue(goal, out idx)) return result;
+                return result + cl.Core.Infos[idx].Bonus;
             }
             catch (Exception e) { Hooks.LogError(e); return result; }
         }
@@ -119,265 +221,616 @@ namespace CastleStory.BuildGoalFix
             {
                 if (goal == null || goal.Provider == null) return "";
                 Plan plan;
-                GoalInfo info;
-                if (!Plans.TryGetValue(goal.Provider, out plan) || !plan.Infos.TryGetValue(goal, out info)) return " ; accès ?";
-                return " ; accès " + (info.Reach ? "oui" : "NON") + (info.Allowed ? "" : " (reporté : coupe " + info.CutVictim + ")");
+                Cluster cl;
+                int idx;
+                if (!Plans.TryGetValue(goal.Provider, out plan) || !plan.Where.TryGetValue(goal, out cl) || !cl.HasCore
+                    || !cl.Index.TryGetValue(goal, out idx)) return " ; accès ?";
+                PlanGoal info = cl.Core.Infos[idx];
+                string why = null;
+                bool ok = true;
+                if (cl.Core.IsCached(idx)) ok = cl.Core.Allowed(idx, out why);
+                return " ; accès " + (info.Reach ? "oui" : "NON") + (info.Excluded ? " (non constructible : " + info.Reason + ")"
+                    : !ok ? " (refusé : " + why + ")" : "");
             }
             catch { return ""; }
         }
 
-        // --- Calcul ---
+        // Brictron vu (IsMatchFor) : registre sans FindObjectsOfType.
+        public static void SeeLabor(Labor labor)
+        {
+            if (labor == null) return;
+            ConnectSignal();
+            KnownLabors.Add(labor);
+        }
+
+        // --- Plan par projet ---
 
         private static Plan GetPlan(BuildGoal goal)
         {
             BuildGoalProvider provider = goal.Provider;
             Plan plan;
-            bool known = Plans.TryGetValue(provider, out plan);
-            // Même frame : pas de relecture de la liste des Blueprints (IsMatchFor/PriorityFor appelés pour chaque goal).
-            if (known && plan.Frame == UnityEngine.Time.frameCount) return plan;
-            List<BuildGoal> goals = Hooks.ProjectGoalsOf(goal);
-            List<BuildGoal> future = FutureGoals(provider, goals);
-            string sig = Signature(goals, future);
-            if (known && plan.Signature == sig && UnityEngine.Time.time - plan.Time < Refresh)
+            if (!Plans.TryGetValue(provider, out plan))
             {
-                plan.Frame = UnityEngine.Time.frameCount;
-                return plan;
+                if (Plans.Count > 32) { Plans.Clear(); Shapes.Clear(); }
+                plan = new Plan();
+                Plans[provider] = plan;
             }
-            if (Plans.Count > 32) Plans.Clear();
-            Plan fresh = Compute(goals, future);
-            fresh.Signature = sig;
-            fresh.Time = UnityEngine.Time.time;
-            fresh.Frame = UnityEngine.Time.frameCount;
-            if (known) fresh.LoggedState = plan.LoggedState;
-            Plans[provider] = fresh;
-            LogPlan(goal, fresh);
-            return fresh;
+            int frame = UnityEngine.Time.frameCount;
+            if (plan.Frame == frame && !plan.Dirty) return plan;
+            bool newFrame = plan.Frame != frame;
+            plan.Frame = frame;
+            try
+            {
+                NewBudgetFrame();
+                long sig = Collect(provider, goal);
+                float now = UnityEngine.Time.time;
+                if (sig != plan.Signature || plan.Dirty || now - plan.Time >= Refresh)
+                {
+                    plan.Dirty = false;
+                    plan.Signature = sig;
+                    plan.Time = now;
+                    Recluster(plan, now);
+                }
+                bool computed = false;
+                foreach (Cluster cl in plan.Clusters)
+                {
+                    if (cl.TooLarge) continue;
+                    if (!cl.Ready)
+                    {
+                        // Lecture initiale : en une fois sous SliceCells, sinon par tranches (budget partagé par frame).
+                        long t0 = Stopwatch.GetTimestamp();
+                        double left = cl.Core.Grid.N <= SliceCells ? double.MaxValue
+                            : ReadBudgetMs - _readTicks * 1000.0 / Stopwatch.Frequency;
+                        if (left <= 0) continue;
+                        cl.BuildCursor = ReadColumns(cl.Core.Grid, cl.BuildCursor, left);
+                        _readTicks += Stopwatch.GetTimestamp() - t0;
+                        if (cl.BuildCursor < cl.Core.Grid.Nx * cl.Core.Grid.Nz) continue;
+                        cl.Ready = true;
+                        cl.BuildCursor = 0;
+                        cl.NeedsCompute = true;
+                    }
+                    else if (newFrame && !cl.NeedsCompute)
+                        RefreshSlice(cl);
+                    if (cl.NeedsCompute)
+                    {
+                        Compute(plan, cl);
+                        computed = true;
+                    }
+                }
+                if (newFrame) UpdatePeople(plan);
+                if (computed) LogPlan(plan);
+            }
+            catch (Exception e)
+            {
+                Hooks.LogError(e);
+                foreach (Cluster cl in plan.Clusters) cl.TooLarge = true;
+            }
+            return plan;
         }
 
-        // Liste des Blueprints, Blueprints futurs, et lesquels sont attribués : tout changement relance le calcul.
-        private static string Signature(List<BuildGoal> goals, List<BuildGoal> future)
+        // Blueprints commités du projet (constructibles et futurs) dans Scratch ; signature (liste + attribués).
+        private static long Collect(BuildGoalProvider provider, BuildGoal asked)
         {
-            int h = goals.Count;
-            foreach (BuildGoal g in goals)
-                h = h * 31 + (g != null ? g.GetInstanceID() * (Hooks.HasLiveWorker(g) ? 3 : 1) : 0);
-            foreach (BuildGoal g in future) h = h * 17 + (g != null ? g.GetInstanceID() : 0);
-            return goals.Count + ":" + future.Count + ":" + h;
-        }
-
-        // Blueprints commités du projet qui ne sont pas encore constructibles (absents de Provider.All()).
-        private static List<BuildGoal> FutureGoals(BuildGoalProvider provider, List<BuildGoal> current)
-        {
-            var list = new List<BuildGoal>();
-            var known = new HashSet<BuildGoal>(current);
+            Scratch.Clear();
+            bool seen = false;
             foreach (Blueprint b in provider.TrackedBlueprints)
             {
                 if (b == null || b.IsNullOrReleased()) continue;
                 BuildGoal g = b.GetComponent<BuildGoal>();
-                if (g == null || g.IsAnti || !g.Commited || known.Contains(g)) continue;
-                list.Add(g);
+                if (g == null || g.IsAnti || !g.Commited || g.volume == null) continue;
+                Scratch.Add(g);
+                if (g == asked) seen = true;
             }
-            return list;
+            if (!seen && asked != null && asked.Commited && asked.volume != null) Scratch.Add(asked);
+            long h = 17;
+            for (int i = 0; i < Scratch.Count; i++)
+            {
+                BuildGoal g = Scratch[i];
+                int id = g.GetInstanceID();
+                h = h * 31 + id;
+                if (Hooks.HasLiveWorker(g)) h = h * 7 + id;
+            }
+            return h * 31 + Scratch.Count;
         }
 
-        private static Plan Compute(List<BuildGoal> goals, List<BuildGoal> future)
+        // Groupes : Blueprints dont les emprises (avec les marges de la grille) se touchent (union-find).
+        // Grille d'un ancien groupe réutilisée si elle contient la nouvelle emprise.
+        private static void Recluster(Plan plan, float now)
         {
-            var plan = new Plan();
-            var sw = Stopwatch.StartNew();
-            var infos = new List<GoalInfo>();
-            foreach (BuildGoal g in goals) AddInfo(plan, infos, g, false);
-            foreach (BuildGoal g in future) AddInfo(plan, infos, g, true);
-            if (infos.Count == 0) return plan;
-
-            var grid = Grid.Build(infos);
-            if (grid == null) { plan.Disabled = true; plan.Note = "zone trop grande, contrôle levé"; return plan; }
-
-            // État de base : monde actuel + Blueprints déjà attribués (ils seront posés quoi qu'il arrive).
-            var baseCells = new List<XYZ>();
-            foreach (GoalInfo i in infos) if (i.InFlight) baseCells.AddRange(i.Cells);
-            int[] r0 = grid.Flood(baseCells);
-            int reachable = 0;
-            foreach (GoalInfo i in infos)
+            int n = Scratch.Count;
+            if (_parent.Length < n) { _parent = new int[n + 32]; _next = new int[n + 32]; _head = new int[n + 32]; }
+            for (int i = 0; i < n; i++) { _parent[i] = i; ShapeOf(Scratch[i]); }
+            for (int i = 0; i < n; i++)
             {
-                i.Reach = grid.AnyIn(r0, i.Access);
-                if (i.Reach && !i.Future) reachable++;
-            }
-            if (reachable == 0)
-            {
-                plan.Disabled = true;
-                plan.Note = "aucun Blueprint accessible selon le modèle, contrôle levé";
-            }
-            else if (ReachEnabled)
-            {
-                // Brictron présents dans la zone et reliés au bord : à ne pas enfermer.
-                var people = new List<KeyValuePair<Labor, int>>();
-                foreach (Labor l in Labors())
+                Shape a = Shapes[Scratch[i]];
+                for (int j = i + 1; j < n; j++)
                 {
-                    if (l == null || l.IsNullOrReleased() || !l.enabled) continue;
-                    int cell = grid.StandCellOf(l.transform.position);
-                    if (cell >= 0 && r0[cell] >= 0) people.Add(new KeyValuePair<Labor, int>(l, cell));
-                }
-                // Blueprints futurs : évalués dans l'état « tout ce qui est plus bas posé » (un état par hauteur).
-                var levels = new Dictionary<int, Level>();
-                foreach (GoalInfo g in infos)
-                {
-                    if (!g.Future) continue;
-                    Level lv;
-                    if (!levels.TryGetValue(g.MinY, out lv))
+                    Shape b = Shapes[Scratch[j]];
+                    if (a.X0 - Margin <= b.X1 + Margin && b.X0 - Margin <= a.X1 + Margin
+                        && a.Y0 - MarginDown <= b.Y1 + MarginUp && b.Y0 - MarginDown <= a.Y1 + MarginUp
+                        && a.Z0 - Margin <= b.Z1 + Margin && b.Z0 - Margin <= a.Z1 + Margin)
                     {
-                        var cells = new List<XYZ>(baseCells);
-                        foreach (GoalInfo o in infos) if (!o.InFlight && o.MinY < g.MinY) cells.AddRange(o.Cells);
-                        lv = new Level { Y = g.MinY, Cells = cells };
-                        lv.Reach = grid.Flood(cells);
-                        levels[g.MinY] = lv;
+                        int ri = Find(i), rj = Find(j);
+                        if (ri != rj) _parent[Math.Max(ri, rj)] = Math.Min(ri, rj);
                     }
-                    if (grid.AnyIn(lv.Reach, g.Access)) lv.Victims.Add(g);
                 }
-                var trapped = new HashSet<Labor>();
-                // (b) Coupure : un parcours par Blueprint candidat qui occupe une case debout reliée (ou sa tête).
-                int allowed = 0;
-                foreach (GoalInfo x in infos)
-                {
-                    if (x.Future) continue;
-                    if (!x.Reach || x.InFlight) { allowed++; continue; }
-                    if (grid.TouchesReach(r0, x.Cells))
-                    {
-                        var withX = new List<XYZ>(baseCells);
-                        withX.AddRange(x.Cells);
-                        int[] rx = grid.Flood(withX);
-                        if (!grid.AnyIn(rx, x.Access)) Refuse(x, "celui qui le pose");
-                        foreach (GoalInfo g in infos)
-                        {
-                            if (!x.Allowed) break;
-                            if (g == x || g.Future || !g.Reach || grid.AnyIn(rx, g.Access)) continue;
-                            Refuse(x, g.Goal.name);
-                        }
-                        foreach (var kv in people)
-                        {
-                            // Brictron debout sur la case posée (ou dessous) : simple passage, pas un enfermement.
-                            if (rx[kv.Value] >= 0 || grid.Covers(x.Cells, kv.Value)) continue;
-                            trapped.Add(kv.Key);
-                            Refuse(x, "Brictron " + kv.Key.name);
-                        }
-                    }
-                    // Victimes futures : X posé dans l'état de leur hauteur (X plus bas y est déjà compris).
-                    foreach (Level lv in levels.Values)
-                    {
-                        if (!x.Allowed) break;
-                        if (lv.Victims.Count == 0 || x.MinY < lv.Y || !grid.TouchesReach(lv.Reach, x.Cells)) continue;
-                        var cells = new List<XYZ>(lv.Cells);
-                        cells.AddRange(x.Cells);
-                        int[] rl = grid.Flood(cells);
-                        foreach (GoalInfo g in lv.Victims)
-                            if (!grid.AnyIn(rl, g.Access)) { Refuse(x, g.Goal.name + " (à venir)"); break; }
-                    }
-                    if (x.Allowed) allowed++;
-                }
-                if (allowed == 0)
-                {
-                    foreach (GoalInfo x in infos) x.Allowed = true;
-                    plan.Note = "tous les Blueprints accessibles coupent quelque chose, coupure ignorée";
-                }
-                else Evacuate(grid, r0, trapped, people);
             }
-
-            // Étape 2 : profondeur dans l'état final.
-            if (PlanEnabled)
+            // Listes chaînées par racine (ordre d'origine conservé).
+            for (int i = 0; i < n; i++) { _head[i] = -1; _next[i] = -1; }
+            for (int i = n - 1; i >= 0; i--)
             {
-                var all = new List<XYZ>();
-                foreach (GoalInfo i in infos) all.AddRange(i.Cells);
-                int[] depth = grid.Flood(all);
-                int max = 0;
-                var raw = new Dictionary<GoalInfo, int>();
-                foreach (GoalInfo i in infos)
+                int r = Find(i);
+                _next[i] = _head[r];
+                _head[r] = i;
+            }
+            // Blueprints disparus (posés ou annulés) : cases relues tout de suite dans les grilles qui les contenaient.
+            Gone.Clear();
+            foreach (BuildGoal old in plan.Previous)
+            {
+                if (old == null || (!old.IsNullOrReleased() && Scratch.Contains(old))) continue;
+                Cluster was;
+                Shape s;
+                if (plan.Where.TryGetValue(old, out was) && was.Ready && Shapes.TryGetValue(old, out s))
                 {
-                    int d = grid.MinDepth(depth, i.Access);
-                    raw[i] = d;
-                    if (d > max) max = d;
+                    RereadAround(was.Core.Grid, s);
+                    int idx;
+                    if (was.HasCore && was.Index.TryGetValue(old, out idx) && was.Core.Infos[idx].InFlight)
+                    {
+                        if (plan.Pending.Count >= 64) plan.Pending.RemoveAt(0);
+                        plan.Pending.Add(new PendingPose { S = s, Time = now });
+                    }
                 }
-                foreach (GoalInfo i in infos)
+                Gone.Add(old);
+            }
+            plan.Previous.Clear();
+            plan.Previous.AddRange(Scratch);
+            bool grown = false;
+            for (int i = 0; i < n; i++)
+                if (!plan.Known.Contains(Scratch[i].GetInstanceID())) { grown = true; break; }
+            if (grown)
+            {
+                plan.Sticky.Clear();                 // nouveau Blueprint (escalier ajouté ?) : exclusions réévaluées
+                if (plan.Known.Count > 8192) plan.Known.Clear();
+                for (int i = 0; i < n; i++) plan.Known.Add(Scratch[i].GetInstanceID());
+            }
+            OldClusters.Clear();
+            OldClusters.AddRange(plan.Clusters);
+            foreach (Cluster c in OldClusters) c.Used = false;
+            plan.Clusters.Clear();
+            plan.Where.Clear();
+            for (int r = 0; r < n; r++)
+            {
+                if (_head[r] < 0 || Find(r) != r) continue;
+                int minX = int.MaxValue, minY = int.MaxValue, minZ = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue, maxZ = int.MinValue;
+                long csig = 17;
+                int count = 0;
+                for (int i = _head[r]; i >= 0; i = _next[i])
                 {
-                    int d = raw[i] < 0 ? max + 5 : raw[i];   // inaccessible une fois tout construit : avant la fermeture
-                    i.Bonus = Math.Min(d, MaxDepthSteps) * BonusPerStep;
+                    Shape s = Shapes[Scratch[i]];
+                    if (s.X0 < minX) minX = s.X0; if (s.Y0 < minY) minY = s.Y0; if (s.Z0 < minZ) minZ = s.Z0;
+                    if (s.X1 > maxX) maxX = s.X1; if (s.Y1 > maxY) maxY = s.Y1; if (s.Z1 > maxZ) maxZ = s.Z1;
+                    int id = Scratch[i].GetInstanceID();
+                    csig = csig * 31 + id;
+                    if (Hooks.HasLiveWorker(Scratch[i])) csig = csig * 7 + id;
+                    count++;
+                }
+                csig = csig * 31 + count;
+                int x0 = minX - Margin, y0 = minY - MarginDown, z0 = minZ - Margin;
+                int x1 = maxX + Margin, y1 = maxY + MarginUp, z1 = maxZ + Margin;
+                Cluster cl = null;
+                bool reuse = false;
+                // Ancien groupe contenant tous les membres : plan gardé tel quel, ou mis à jour par voie rapide
+                // (attribution d'un Blueprint testé, pose d'un attribué) ; sinon recalcul complet.
+                foreach (Cluster c in OldClusters)
+                {
+                    if (c.Used || c.TooLarge || !c.HasCore) continue;
+                    bool all = true;
+                    for (int i = _head[r]; i >= 0 && all; i = _next[i]) if (!c.Index.ContainsKey(Scratch[i])) all = false;
+                    if (all) { cl = c; break; }
+                }
+                if (cl != null && now - cl.Time < Refresh && !grown)
+                {
+                    if (csig == cl.Signature) reuse = true;
+                    else if (TryFast(cl, r)) { reuse = true; cl.Fast++; }
+                }
+                if (cl == null)
+                    foreach (Cluster c in OldClusters)
+                        if (!c.Used && !c.TooLarge && x0 >= c.GridX0 && x1 <= c.GridX1 && y0 >= c.GridY0 && y1 <= c.GridY1 && z0 >= c.GridZ0 && z1 <= c.GridZ1)
+                        { cl = c; break; }
+                if (cl == null)
+                {
+                    if (FreeClusters.Count > 0) { cl = FreeClusters[FreeClusters.Count - 1]; FreeClusters.RemoveAt(FreeClusters.Count - 1); }
+                    else cl = new Cluster();
+                    long cells = (long)(x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+                    cl.TooLarge = cells > MaxCells;
+                    cl.HasCore = false;
+                    cl.Ready = false;
+                    cl.BuildCursor = 0;
+                    cl.RefreshCursor = 0;
+                    cl.Signature = long.MinValue;
+                    cl.LastOk = now;
+                    if (cl.TooLarge)
+                        Hooks.LogLine(string.Format("{0} plan : zone trop grande ({1} cases), contrôle levé pour ce groupe", Hooks.OrderTagOf(Scratch[r]), cells));
+                    else
+                    {
+                        cl.Core.Grid.Resize(x0, y0, z0, x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1);
+                        cl.GridX0 = x0; cl.GridY0 = y0; cl.GridZ0 = z0; cl.GridX1 = x1; cl.GridY1 = y1; cl.GridZ1 = z1;
+                    }
+                }
+                cl.Used = true;
+                cl.Goals.Clear();
+                for (int i = _head[r]; i >= 0; i = _next[i]) { cl.Goals.Add(Scratch[i]); plan.Where[Scratch[i]] = cl; }
+                if (!reuse) cl.NeedsCompute = true;
+                cl.Signature = csig;
+                plan.Clusters.Add(cl);
+            }
+            foreach (Cluster c in OldClusters)
+                if (!c.Used) { c.Goals.Clear(); c.Index.Clear(); c.HasCore = false; FreeClusters.Add(c); }
+            if (FreeClusters.Count > 16) FreeClusters.RemoveRange(16, FreeClusters.Count - 16);
+            foreach (BuildGoal old in Gone) Shapes.Remove(old);
+        }
+
+        private static readonly List<BuildGoal> Gone = new List<BuildGoal>();
+        private static readonly HashSet<BuildGoal> Members = new HashSet<BuildGoal>();
+        private static readonly List<int> GoneIdx = new List<int>();
+        private static readonly List<int> HiredIdx = new List<int>();
+
+        // Voie rapide (BuildPlanCore.Hire / Placed) : seuls des attribués ont été posés (cases pleines dans le monde)
+        // et/ou des Blueprints testés ont été attribués. Sinon (annulation, échec de tâche…) : recalcul complet.
+        private static bool TryFast(Cluster cl, int r)
+        {
+            BuildPlanCore core = cl.Core;
+            if (core.Disabled) return false;
+            Members.Clear();
+            for (int i = _head[r]; i >= 0; i = _next[i]) Members.Add(Scratch[i]);
+            GoneIdx.Clear();
+            foreach (BuildGoal old in cl.Goals)
+            {
+                if (Members.Contains(old)) continue;
+                int idx;
+                Shape s;
+                if (!cl.Index.TryGetValue(old, out idx) || !core.Infos[idx].InFlight || core.Infos[idx].Placed) return false;
+                if (!Shapes.TryGetValue(old, out s) || !BuiltInWorld(s)) return false;     // annulé : recalcul complet
+                GoneIdx.Add(idx);
+            }
+            HiredIdx.Clear();
+            for (int i = _head[r]; i >= 0; i = _next[i])
+            {
+                PlanGoal info = core.Infos[cl.Index[Scratch[i]]];
+                bool live = Hooks.HasLiveWorker(Scratch[i]);
+                if (info.InFlight && !live) return false;                                   // tâche finie sans pose
+                if (!info.InFlight && live) HiredIdx.Add(info.Id);
+            }
+            foreach (int h in HiredIdx)
+            {
+                if (!core.CanFastHire(h)) return false;
+                core.Hire(h);
+            }
+            if (GoneIdx.Count > 0)
+            {
+                core.Placed(GoneIdx);
+                foreach (BuildGoal old in cl.Goals) if (!Members.Contains(old)) cl.Index.Remove(old);
+            }
+            // cl.Time inchangé : le recalcul périodique (Refresh) reste compté depuis le dernier calcul complet.
+            return true;
+        }
+
+        // Toutes les cases du Blueprint sont pleines dans le monde (il a bien été posé).
+        private static bool BuiltInWorld(Shape s)
+        {
+            if (s.Cells.Length == 0) return false;
+            foreach (XYZ c in s.Cells) if (!Voxel.IsNonEmpty(c)) return false;
+            return true;
+        }
+
+        private static int Find(int i)
+        {
+            while (_parent[i] != i) { _parent[i] = _parent[_parent[i]]; i = _parent[i]; }
+            return i;
+        }
+
+        private static Shape ShapeOf(BuildGoal g)
+        {
+            Shape s;
+            if (Shapes.TryGetValue(g, out s)) return s;
+            if (Shapes.Count > 4096) Shapes.Clear();
+            s = new Shape();
+            var cells = g.volume.GetCases(VProperty.fantome);
+            var nw = g.volume.GetCases(VProperty.notWallSupport);
+            var access = g.volume.access;
+            var support = g.volume.GetCases(VProperty.mainSupportReq);
+            string key = g.AssetKey != null ? g.AssetKey.Name : g.name;
+            s.Cells = new XYZ[cells.Count];
+            s.Kind = new byte[cells.Count];
+            s.MinY = int.MaxValue;
+            s.X0 = s.Y0 = s.Z0 = int.MaxValue;
+            s.X1 = s.Y1 = s.Z1 = int.MinValue;
+            for (int i = 0; i < cells.Count; i++)
+            {
+                XYZ c = cells[i];
+                s.Cells[i] = c;
+                bool slope = false;
+                for (int j = 0; j < nw.Count; j++) if (nw[j] == c) { slope = true; break; }
+                s.Kind[i] = KindOf(key, slope);
+                if (c.y < s.MinY) s.MinY = c.y;
+                Extend(s, c);
+            }
+            if (s.MinY == int.MaxValue) s.MinY = (int)g.transform.position.y;
+            s.Access = new XYZ[access.Count];
+            for (int i = 0; i < access.Count; i++) { s.Access[i] = access[i]; Extend(s, access[i]); }
+            if (s.X0 == int.MaxValue)
+            {
+                XYZ p = XYZ.FromVector3(g.transform.position);
+                Extend(s, p);
+            }
+            s.Support = new XYZ[support.Count];
+            for (int i = 0; i < support.Count; i++) s.Support[i] = support[i];
+            ValidatorComponent vc = g.GetComponent<ValidatorComponent>();
+            s.MaxMissing = vc != null ? vc.MaxMissingSupport : 0;
+            string vt = "";
+            try { if (vc != null && vc.validatorType != null) vt = vc.GetValidatorType.Name; } catch { vt = ""; }
+            s.SupportAny = vt.IndexOf("Plank", StringComparison.Ordinal) >= 0 || vt.IndexOf("Beam", StringComparison.Ordinal) >= 0;
+            Shapes[g] = s;
+            return s;
+        }
+
+        private static void Extend(Shape s, XYZ p)
+        {
+            if (p.x < s.X0) s.X0 = p.x; if (p.y < s.Y0) s.Y0 = p.y; if (p.z < s.Z0) s.Z0 = p.z;
+            if (p.x > s.X1) s.X1 = p.x; if (p.y > s.Y1) s.Y1 = p.y; if (p.z > s.Z1) s.Z1 = p.z;
+        }
+
+        // Nature d'une case posée vue par le plan : porte passable ; case d'escalier sans appui mural = pente ;
+        // créneaux, poutres, colonnes… = pleins mais leur dessus n'est pas compté comme sol (forme incertaine).
+        private static byte KindOf(string key, bool notWallSupport)
+        {
+            if (key == null) return PlanGrid.OFull;
+            if (key.IndexOf("Door", StringComparison.OrdinalIgnoreCase) >= 0) return PlanGrid.OPass;
+            if (notWallSupport && key.IndexOf("Stair", StringComparison.OrdinalIgnoreCase) >= 0) return PlanGrid.OSlope;
+            if (key.IndexOf("Merlon", StringComparison.OrdinalIgnoreCase) >= 0 || key.IndexOf("Beam", StringComparison.OrdinalIgnoreCase) >= 0
+                || key.IndexOf("Brace", StringComparison.OrdinalIgnoreCase) >= 0 || key.IndexOf("Column", StringComparison.OrdinalIgnoreCase) >= 0
+                || key.IndexOf("Parapet", StringComparison.OrdinalIgnoreCase) >= 0 || key.IndexOf("Arch", StringComparison.OrdinalIgnoreCase) >= 0)
+                return PlanGrid.ONoFloor;
+            return PlanGrid.OFull;
+        }
+
+        // Lit les colonnes (x, z) à partir de `from` jusqu'à épuisement du budget ; rend la colonne suivante.
+        private static int ReadColumns(PlanGrid grid, int from, double budgetMs)
+        {
+            long t0 = Stopwatch.GetTimestamp();
+            long limit = budgetMs >= double.MaxValue / 2 ? long.MaxValue : (long)(budgetMs * Stopwatch.Frequency / 1000.0);
+            int columns = grid.Nx * grid.Nz;
+            TestPathfinding tp = TestPathfinding.Instance;
+            int col = from;
+            while (col < columns)
+            {
+                int x = col / grid.Nz, z = col % grid.Nz;
+                int b = (x * grid.Nz + z) * grid.Ny;
+                for (int y = 0; y < grid.Ny; y++) grid.Cell[b + y] = ReadCell(tp, grid.X0 + x, grid.Y0 + y, grid.Z0 + z);
+                col++;
+                if ((col & 15) == 0 && Stopwatch.GetTimestamp() - t0 > limit) break;
+            }
+            return col;
+        }
+
+        private static byte ReadCell(TestPathfinding tp, int x, int y, int z)
+        {
+            var p = new XYZ(x, y, z);
+            byte v = 0;
+            if (Voxel.IsNonEmpty(p)) { v |= PlanGrid.NonEmpty; if (Voxel.IsFull(p)) v |= PlanGrid.Full; }
+            if (TestPathfinding.IsNatureBlocker(p)) v |= PlanGrid.Nature;
+            if (tp != null && tp.IsAWalkableObstacle(p)) v |= PlanGrid.Walkable;
+            return v;
+        }
+
+        // Relecture continue de la grille (blocs posés, terrain creusé, arbres) par petites tranches.
+        private static void RefreshSlice(Cluster cl)
+        {
+            PlanGrid grid = cl.Core.Grid;
+            int columns = grid.Nx * grid.Nz;
+            int next = ReadColumns(grid, cl.RefreshCursor, RefreshBudgetMs);
+            cl.RefreshCursor = next >= columns ? 0 : next;
+        }
+
+        // Cases d'un Blueprint posé (et voisines verticales) relues dans le monde.
+        private static void RereadAround(PlanGrid grid, Shape s)
+        {
+            TestPathfinding tp = TestPathfinding.Instance;
+            foreach (XYZ c in s.Cells)
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    int i = grid.IndexOf(c.x, c.y + dy, c.z);
+                    if (i >= 0) grid.Cell[i] = ReadCell(tp, c.x, c.y + dy, c.z);
+                }
+        }
+
+        private static void Compute(Plan plan, Cluster cl)
+        {
+            int gc0 = GC.CollectionCount(0);
+            long t0 = Stopwatch.GetTimestamp();
+            BuildPlanCore core = cl.Core;
+            PlanGrid grid = core.Grid;
+            core.Reset();
+            ApplyPending(plan, grid);
+            cl.Index.Clear();
+            for (int i = 0; i < cl.Goals.Count; i++)
+            {
+                BuildGoal g = cl.Goals[i];
+                Shape s = ShapeOf(g);
+                PlanGoal info = core.AddGoal(g.name, g);
+                for (int k = 0; k < s.Cells.Length; k++)
+                {
+                    int c = grid.IndexOf(s.Cells[k].x, s.Cells[k].y, s.Cells[k].z);
+                    if (c < 0) continue;
+                    info.Cells.Add(c);
+                    info.Kind.Add(s.Kind[k]);
+                }
+                foreach (XYZ a in s.Access) { int c = grid.IndexOf(a.x, a.y, a.z); if (c >= 0) info.Access.Add(c); }
+                foreach (XYZ p in s.Support) { int c = grid.IndexOf(p.x, p.y, p.z); if (c >= 0) info.SupportCells.Add(c); }
+                info.SupportAny = s.SupportAny;
+                info.MaxMissing = s.MaxMissing;
+                info.MinY = s.MinY;
+                info.InFlight = Hooks.HasLiveWorker(g);
+                string sticky;
+                if (plan.Sticky.TryGetValue(g.GetInstanceID(), out sticky)) { info.Excluded = true; info.Reason = sticky; }
+                cl.Index[g] = info.Id;
+            }
+            core.Compute();
+            // v1.9.1 : seule l'exclusion « inaccessible » est retenue ; « sans support » est recalculé à chaque calcul.
+            foreach (PlanGoal info in core.Infos)
+                if (info.Excluded && info.Reason != BuildPlanCore.ReasonNoSupport)
+                    plan.Sticky[((BuildGoal)info.Tag).GetInstanceID()] = info.Reason;
+            cl.HasCore = true;
+            cl.NeedsCompute = false;
+            cl.Time = UnityEngine.Time.time;
+            cl.LastOk = cl.Time;
+            cl.Ms = (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency;
+            cl.Gc = GC.CollectionCount(0) - gc0;
+            UpdatePeople(cl);
+        }
+
+        // v1.9.1 : cases des Blueprints posés que les voxels ne montrent pas encore comptées comme posées ; dès que
+        // le bloc est lisible (BuiltInWorld), ses cases sont relues et l'entrée retirée (au plus PendingSeconds).
+        private static void ApplyPending(Plan plan, PlanGrid grid)
+        {
+            float now = UnityEngine.Time.time;
+            for (int p = plan.Pending.Count - 1; p >= 0; p--)
+            {
+                PendingPose e = plan.Pending[p];
+                if (now - e.Time > PendingSeconds || now < e.Time) { plan.Pending.RemoveAt(p); continue; }
+                if (BuiltInWorld(e.S))
+                {
+                    RereadAround(grid, e.S);
+                    plan.Pending.RemoveAt(p);
+                    continue;
+                }
+                for (int k = 0; k < e.S.Cells.Length; k++)
+                {
+                    int i = grid.IndexOf(e.S.Cells[k].x, e.S.Cells[k].y, e.S.Cells[k].z);
+                    if (i >= 0) grid.AssumePlaced(i, e.S.Kind[k]);
                 }
             }
-            plan.Ms = sw.ElapsedMilliseconds;
-            plan.Note += (plan.Note.Length > 0 ? " ; " : "") + string.Format("{0} cases, {1} ms", grid.Count, plan.Ms);
-            return plan;
         }
 
-        private sealed class Level
-        {
-            public int Y;
-            public List<XYZ> Cells;
-            public int[] Reach;
-            public List<GoalInfo> Victims = new List<GoalInfo>();
-        }
+        // --- Brictron ---
 
-        private static void AddInfo(Plan plan, List<GoalInfo> infos, BuildGoal g, bool future)
-        {
-            if (g == null || g.IsNullOrReleased() || g.IsAnti || g.volume == null || plan.Infos.ContainsKey(g)) return;
-            var info = new GoalInfo { Goal = g, Future = future, InFlight = !future && Hooks.HasLiveWorker(g), MinY = int.MaxValue };
-            if (!IsPassable(g)) foreach (XYZ c in g.volume.blueprint) { info.Cells.Add(c); if (c.y < info.MinY) info.MinY = c.y; }
-            foreach (XYZ a in g.volume.access) info.Access.Add(a);
-            if (info.MinY == int.MaxValue) info.MinY = (int)g.transform.position.y;
-            infos.Add(info);
-            plan.Infos[g] = info;
-        }
-
-        private static void Refuse(GoalInfo x, string victim)
-        {
-            if (!x.Allowed) return;
-            x.Allowed = false;
-            x.CutVictim = victim;
-        }
-
-        // Registre des Brictron : FindObjectsOfType (≈ 40 ms) toutes les 30 s seulement, complété par le signal
-        // Labor.LaborStarted ; les Brictron morts sont filtrés à l'usage. Le signal est rebranché quand le temps de jeu
-        // repart en arrière (nouvelle partie : GameSignals vide ses abonnés à la destruction de la scène).
+        // Registre : Brictron vus par IsMatchFor + signal Labor.LaborStarted ; morts filtrés à l'usage. Le signal est
+        // rebranché quand le temps de jeu repart en arrière (nouvelle partie : GameSignals vide ses abonnés).
         private static readonly HashSet<Labor> KnownLabors = new HashSet<Labor>();
         private static readonly List<Labor> LaborScratch = new List<Labor>();
+        private static readonly List<Labor> DeadScratch = new List<Labor>();
+        private static float _signalTime = -1f;
+
+        private static void ConnectSignal()
+        {
+            float now = UnityEngine.Time.time;
+            if (_signalTime >= 0f && now >= _signalTime) { _signalTime = now; return; }
+            if (now < _signalTime) KnownLabors.Clear();
+            _signalTime = now;
+            GameSignals.Connect(Labor.LaborStarted, (Labor l) => { if (l != null) KnownLabors.Add(l); });
+        }
 
         private static List<Labor> Labors()
         {
-            float now = UnityEngine.Time.time;
-            if (now - _laborsTime > 30f || now < _laborsTime)
-            {
-                bool reconnect = now < _laborsTime || _laborsTime < 0f;
-                KnownLabors.Clear();
-                foreach (Labor l in UnityEngine.Object.FindObjectsOfType<Labor>()) KnownLabors.Add(l);
-                if (reconnect) GameSignals.Connect(Labor.LaborStarted, (Labor l) => { if (l != null) KnownLabors.Add(l); });
-                _laborsTime = now;
-            }
             LaborScratch.Clear();
-            KnownLabors.RemoveWhere(l => l == null || l.IsNullOrReleased());
-            LaborScratch.AddRange(KnownLabors);
+            DeadScratch.Clear();
+            foreach (Labor l in KnownLabors)
+            {
+                if (l == null || l.IsNullOrReleased()) { DeadScratch.Add(l); continue; }
+                if (l.enabled) LaborScratch.Add(l);
+            }
+            foreach (Labor l in DeadScratch) KnownLabors.Remove(l);
             return LaborScratch;
         }
 
-        // Brictron inactif qui serait enfermé par une pose à venir : ordre de marcher vers le bord de la zone
-        // (case reliée la plus proche). Un Brictron occupé finira sa tâche ; il sera traité au calcul suivant.
-        private static void Evacuate(Grid grid, int[] r0, HashSet<Labor> trapped, List<KeyValuePair<Labor, int>> people)
+        // Positions des Brictron (case debout dans la grille de chaque groupe), relues une fois par frame.
+        private static void UpdatePeople(Plan plan)
         {
-            if (trapped.Count == 0) return;
-            float now = UnityEngine.Time.time;
-            foreach (var kv in people)
+            foreach (Cluster cl in plan.Clusters) if (cl.HasCore) UpdatePeople(cl);
+        }
+
+        private static void UpdatePeople(Cluster cl)
+        {
+            BuildPlanCore core = cl.Core;
+            core.People.Clear();
+            foreach (Labor l in Labors())
             {
-                Labor l = kv.Key;
-                if (!trapped.Contains(l) || !IsIdle(l)) continue;
+                int cell = StandCellOf(core.Grid, l.transform.position);
+                if (cell >= 0) core.People.Add(cell);
+            }
+        }
+
+        // Case debout d'un Brictron : sa case, sinon celle du dessous ou du dessus.
+        private static int StandCellOf(PlanGrid grid, Vector3 position)
+        {
+            XYZ p = XYZ.FromVector3(position);
+            for (int dy = 0; dy < 3; dy++)
+            {
+                int y = dy == 0 ? p.y : dy == 1 ? p.y - 1 : p.y + 1;
+                int i = grid.IndexOf(p.x, y, p.z);
+                if (i >= 0 && grid.StandAt(i)) return i;
+            }
+            return -1;
+        }
+
+        // Brictron inactif qu'une pose enfermerait (refus « enfermerait un Brictron ») : ordre de marcher vers la case
+        // de bord reliée la plus proche. Un Brictron occupé finira sa tâche ; il sera revu au prochain refus.
+        private static void Evacuate(Cluster cl)
+        {
+            BuildPlanCore core = cl.Core;
+            if (core.Threatened.Count == 0) return;
+            float now = UnityEngine.Time.time;
+            if (now - cl.LastEvacuation < 1f) return;
+            cl.LastEvacuation = now;
+            PlanGrid grid = core.Grid;
+            foreach (Labor l in Labors())
+            {
+                int cell = StandCellOf(grid, l.transform.position);
+                if (cell < 0 || !core.Threatened.Contains(cell) || !IsIdle(l)) continue;
                 float last;
                 if (LastEvacuation.TryGetValue(l, out last) && now - last < EvacuateEvery) continue;
-                int target = grid.NearestBorder(r0, kv.Value);
+                int target = NearestBorder(core, cell);
                 if (target < 0) continue;
-                XYZ dest = grid.Position(target);
+                int x, y, z;
+                grid.Position(target, out x, out y, out z);
                 try
                 {
-                    Order.Move.WalkToward.Send(l, Location.Of(dest), Labor.DecisionSource.Project);
+                    Order.Move.WalkToward.Send(l, Location.Of(new XYZ(x, y, z)), Labor.DecisionSource.Project);
                     LastEvacuation[l] = now;
                     if (LastEvacuation.Count > 256) LastEvacuation.Clear();
-                    Hooks.LogLine(string.Format("Évacuation : {0} serait enfermé, envoyé vers {1},{2},{3}", l.name, dest.x, dest.y, dest.z));
+                    Hooks.LogLine(string.Format("Évacuation : {0} serait enfermé, envoyé vers {1},{2},{3}", l.name, x, y, z));
                 }
                 catch (Exception e) { Hooks.LogError(e); }
             }
+            core.Threatened.Clear();
+        }
+
+        // Case de bord reliée (état actuel) la plus proche de `from` (rare : allocations admises).
+        private static int NearestBorder(BuildPlanCore core, int from)
+        {
+            PlanGrid g = core.Grid;
+            var seen = new HashSet<int> { from };
+            var queue = new Queue<int>();
+            queue.Enqueue(from);
+            while (queue.Count > 0)
+            {
+                int i = queue.Dequeue();
+                int y = i % g.Ny, z = (i / g.Ny) % g.Nz, x = i / g.StrideX;
+                if (core.BaseMarks[i] != 0 && (x == 0 || z == 0 || x == g.Nx - 1 || z == g.Nz - 1)) return i;
+                for (int k = 0; k < 4; k++)
+                {
+                    int nx = x + (k == 0 ? 1 : k == 1 ? -1 : 0), nz = z + (k == 2 ? 1 : k == 3 ? -1 : 0);
+                    if (nx < 0 || nz < 0 || nx >= g.Nx || nz >= g.Nz) continue;
+                    int n = g.Index(nx, y, nz);
+                    for (int dy = 0; dy < 3; dy++)
+                    {
+                        if ((dy == 1 && y == 0) || (dy == 2 && y + 1 >= g.Ny)) continue;
+                        int m = dy == 0 ? n : dy == 1 ? n - 1 : n + 1;
+                        if (core.BaseMarks[m] != 0 && seen.Add(m)) { queue.Enqueue(m); break; }
+                    }
+                }
+            }
+            return -1;
         }
 
         private static bool IsIdle(Labor l)
@@ -388,272 +841,48 @@ namespace CastleStory.BuildGoalFix
             return t == null || t.Giver == null;
         }
 
-        // Porte (Door, HeavyDoor) : passable une fois construite, ne compte pas comme obstacle.
-        private static bool IsPassable(BuildGoal g)
-        {
-            string key = g.AssetKey != null ? g.AssetKey.Name : g.name;
-            return key != null && key.IndexOf("Door", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
+        // --- Journal ---
 
-        private static void LogPlan(BuildGoal goal, Plan plan)
+        private static void LogPlan(Plan plan)
         {
-            if (!Hooks.OrdersLogged) return;
-            int unreachable = 0, deferred = 0;
+            if (!Hooks.OrdersLogged || plan.Clusters.Count == 0 || plan.Previous.Count == 0) return;
+            int total = 0, inFlight = 0, unreachable = 0, excluded = 0, cells = 0, peels = 0, steps = 0, floods = 0, gc = 0, fast = 0;
+            double ms = 0;
             var names = new List<string>();
-            foreach (GoalInfo i in plan.Infos.Values)
+            foreach (Cluster cl in plan.Clusters)
             {
-                if (i.Future) continue;
-                if (!i.Reach) { unreachable++; if (names.Count < 6) names.Add(i.Goal.name + " inaccessible"); }
-                else if (!i.Allowed) { deferred++; if (names.Count < 6) names.Add(i.Goal.name + " coupe " + i.CutVictim); }
+                if (!cl.HasCore) continue;
+                BuildPlanCore core = cl.Core;
+                foreach (PlanGoal i in core.Infos)
+                {
+                    total++;
+                    if (i.Placed) continue;
+                    if (i.InFlight) inFlight++;
+                    if (i.Excluded) { excluded++; if (names.Count < 12) names.Add(((BuildGoal)i.Tag).name + " (" + i.Reason + ")"); }
+                    else if (!i.Reach && !i.InFlight) unreachable++;
+                }
+                cells += core.Grid.N;
+                ms = Math.Max(ms, cl.Ms);
+                gc += cl.Gc;
+                peels += (int)core.Peels; steps += (int)core.PeelSteps; floods += (int)core.Grid.Floods;
+                fast += cl.Fast;
+                cl.Fast = 0;
+                core.Peels = core.PeelSteps = 0;
+                core.Grid.ResetCost();
+                cl.Gc = 0;
             }
-            string state = string.Format("{0} Blueprint(s), {1} inaccessible(s), {2} reporté(s){3}", plan.Infos.Count, unreachable, deferred,
-                plan.Disabled ? ", contrôle levé" : "");
-            // Calcul lent : toujours journalisé (surveillance des gels).
-            if (state == plan.LoggedState && plan.Ms < 30) return;
+            string tag = Hooks.OrderTagOf(plan.Previous[0]);
+            string ex = string.Join(", ", names.ToArray());
+            if (excluded > 0 && ex != plan.LoggedExcluded)
+                Hooks.LogLine(string.Format("{0} NON CONSTRUCTIBLE sans escalier ou appui : {1} Blueprint(s) : {2}", tag, excluded, ex));
+            plan.LoggedExcluded = excluded > 0 ? ex : null;
+            string state = string.Format("{0} Blueprint(s) en {1} groupe(s), {2} attribué(s), {3} sans accès pour l'instant, {4} non constructible(s)",
+                total, plan.Clusters.Count, inFlight, unreachable, excluded);
+            // Calcul lent ou GC pendant le calcul : toujours journalisé (surveillance des gels).
+            if (state == plan.LoggedState && ms < 5 && gc == 0) return;
             plan.LoggedState = state;
-            Hooks.LogLine(string.Format("{0} accès : {1}{2} ; {3}", Hooks.OrderTagOf(goal), state,
-                names.Count > 0 ? " [" + string.Join(", ", names.ToArray()) + "]" : "", plan.Note));
-        }
-
-        // --- Grille locale ---
-
-        private sealed class Grid
-        {
-            private int x0, y0, z0, nx, ny, nz;
-            private byte[] cell;    // bits : 1 non vide, 2 plein entier, 4 blocage nature, 8 volume walkable
-            private bool[] stand0;  // cases debout dans l'état actuel
-            private int strideX;    // pas d'index : y → 1, z → ny, x → nz*ny
-            public int Count { get { return cell.Length; } }
-
-            public static Grid Build(List<GoalInfo> infos)
-            {
-                int minX = int.MaxValue, minY = int.MaxValue, minZ = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue, maxZ = int.MinValue;
-                foreach (GoalInfo i in infos)
-                {
-                    foreach (XYZ p in i.Cells) Extend(p, ref minX, ref minY, ref minZ, ref maxX, ref maxY, ref maxZ);
-                    foreach (XYZ p in i.Access) Extend(p, ref minX, ref minY, ref minZ, ref maxX, ref maxY, ref maxZ);
-                }
-                if (minX == int.MaxValue) return null;
-                var g = new Grid
-                {
-                    x0 = minX - Margin, y0 = minY - MarginDown, z0 = minZ - Margin,
-                    nx = maxX - minX + 1 + 2 * Margin, ny = maxY - minY + 1 + MarginDown + MarginUp, nz = maxZ - minZ + 1 + 2 * Margin,
-                };
-                long n = (long)g.nx * g.ny * g.nz;
-                if (n > MaxCells) return null;
-                g.strideX = g.nz * g.ny;
-                g.cell = new byte[n];
-                TestPathfinding tp = TestPathfinding.Instance;
-                for (int x = 0; x < g.nx; x++)
-                    for (int z = 0; z < g.nz; z++)
-                        for (int y = 0; y < g.ny; y++)
-                        {
-                            var p = new XYZ(g.x0 + x, g.y0 + y, g.z0 + z);
-                            byte b = 0;
-                            if (Voxel.IsNonEmpty(p)) { b |= 1; if (Voxel.IsFull(p)) b |= 2; }
-                            if (TestPathfinding.IsNatureBlocker(p)) b |= 4;
-                            if (tp != null && tp.IsAWalkableObstacle(p)) b |= 8;
-                            g.cell[g.Index(x, y, z)] = b;
-                        }
-                g.stand0 = new bool[n];
-                for (int i = 0; i < n; i++) g.stand0[i] = g.StandAt(i, null);
-                return g;
-            }
-
-            private static void Extend(XYZ p, ref int minX, ref int minY, ref int minZ, ref int maxX, ref int maxY, ref int maxZ)
-            {
-                if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.z < minZ) minZ = p.z;
-                if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; if (p.z > maxZ) maxZ = p.z;
-            }
-
-            private int Index(int x, int y, int z) { return (x * nz + z) * ny + y; }
-
-            private int IndexOf(XYZ p)
-            {
-                int x = p.x - x0, y = p.y - y0, z = p.z - z0;
-                return x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz ? Index(x, y, z) : -1;
-            }
-
-            public XYZ Position(int i)
-            {
-                int y = i % ny, z = (i / ny) % nz, x = i / strideX;
-                return new XYZ(x0 + x, y0 + y, z0 + z);
-            }
-
-            // Case debout d'indice i, avec des cases rendues pleines (overlay). Au-dessus/au-dessous de la grille :
-            // tête libre, sol absent (marges de 3 dessous et 4 dessus).
-            private bool StandAt(int i, HashSet<int> overlay)
-            {
-                if (overlay != null && overlay.Contains(i)) return false;
-                byte bp = cell[i];
-                if ((bp & 4) != 0) return false;
-                int y = i % ny;
-                if (y + 1 < ny)
-                {
-                    if ((cell[i + 1] & 1) != 0 || (overlay != null && overlay.Contains(i + 1))) return false;
-                }
-                if ((bp & 8) != 0) return true;
-                if ((bp & 1) != 0) return (bp & 2) == 0;          // pente
-                if (y == 0) return false;
-                return (cell[i - 1] & 2) != 0 || (overlay != null && overlay.Contains(i - 1));
-            }
-
-            // Cases dont l'état debout change quand `solid` devient plein : la case, celle du dessous (tête), celle du
-            // dessus (nouveau sol). Les autres gardent stand0.
-            private Dictionary<int, bool> Changes(List<XYZ> solid)
-            {
-                if (solid == null || solid.Count == 0) return null;
-                var overlay = new HashSet<int>();
-                foreach (XYZ c in solid) { int i = IndexOf(c); if (i >= 0) overlay.Add(i); }
-                var changes = new Dictionary<int, bool>();
-                foreach (int i in overlay)
-                {
-                    int y = i % ny;
-                    changes[i] = false;
-                    if (y > 0) changes[i - 1] = StandAt(i - 1, overlay);
-                    if (y + 1 < ny) changes[i + 1] = StandAt(i + 1, overlay);
-                }
-                return changes;
-            }
-
-            private bool S(int i, Dictionary<int, bool> changes)
-            {
-                bool v;
-                return changes != null && changes.TryGetValue(i, out v) ? v : stand0[i];
-            }
-
-            // Distance (en pas) au bord horizontal de la grille par les cases debout ; -1 si non relié.
-            public int[] Flood(List<XYZ> solid)
-            {
-                Dictionary<int, bool> ch = Changes(solid);
-                var dist = new int[cell.Length];
-                for (int i = 0; i < dist.Length; i++) dist[i] = -1;
-                var queue = new Queue<int>();
-                for (int x = 0; x < nx; x++)
-                    for (int z = 0; z < nz; z++)
-                    {
-                        if (x != 0 && z != 0 && x != nx - 1 && z != nz - 1) continue;
-                        for (int y = 0; y < ny; y++)
-                        {
-                            int i = Index(x, y, z);
-                            if (!S(i, ch)) continue;
-                            dist[i] = 0;
-                            queue.Enqueue(i);
-                        }
-                    }
-                while (queue.Count > 0)
-                {
-                    int i = queue.Dequeue();
-                    int y = i % ny, z = (i / ny) % nz, x = i / strideX;
-                    int d = dist[i] + 1;
-                    Step(i, x + 1 < nx, strideX, y, d, dist, queue, ch);
-                    Step(i, x > 0, -strideX, y, d, dist, queue, ch);
-                    Step(i, z + 1 < nz, ny, y, d, dist, queue, ch);
-                    Step(i, z > 0, -ny, y, d, dist, queue, ch);
-                }
-                return dist;
-            }
-
-            // Voisin horizontal : même hauteur si debout, sinon un voxel plus bas et/ou plus haut.
-            private void Step(int i, bool inside, int offset, int y, int d, int[] dist, Queue<int> queue, Dictionary<int, bool> ch)
-            {
-                if (!inside) return;
-                int n = i + offset;
-                if (S(n, ch)) { Visit(n, d, dist, queue); return; }
-                if (y > 0 && S(n - 1, ch)) Visit(n - 1, d, dist, queue);
-                if (y + 1 < ny && S(n + 1, ch)) Visit(n + 1, d, dist, queue);
-            }
-
-            private static void Visit(int n, int d, int[] dist, Queue<int> queue)
-            {
-                if (dist[n] >= 0) return;
-                dist[n] = d;
-                queue.Enqueue(n);
-            }
-
-            public bool AnyIn(int[] dist, List<XYZ> cells)
-            {
-                foreach (XYZ c in cells) { int i = IndexOf(c); if (i >= 0 && dist[i] >= 0) return true; }
-                return false;
-            }
-
-            public int MinDepth(int[] depth, List<XYZ> cells)
-            {
-                int best = -1;
-                foreach (XYZ c in cells)
-                {
-                    int i = IndexOf(c);
-                    if (i >= 0 && depth[i] >= 0 && (best < 0 || depth[i] < best)) best = depth[i];
-                }
-                return best;
-            }
-
-            // Vrai si une des cases (ou la case sous elle : la tête d'un Brictron) est une case debout reliée.
-            public bool TouchesReach(int[] dist, List<XYZ> cells)
-            {
-                foreach (XYZ c in cells)
-                {
-                    int i = IndexOf(c);
-                    if (i >= 0 && dist[i] >= 0) return true;
-                    int j = IndexOf(c - XYZ.up);
-                    if (j >= 0 && dist[j] >= 0) return true;
-                }
-                return false;
-            }
-
-            // Vrai si la case i (ou celle de sa tête) fait partie des cases posées.
-            public bool Covers(List<XYZ> cells, int i)
-            {
-                foreach (XYZ c in cells)
-                {
-                    int j = IndexOf(c);
-                    if (j == i || j == i + 1) return true;
-                }
-                return false;
-            }
-
-            // Case debout d'un Brictron : sa case, sinon celle du dessous ou du dessus.
-            public int StandCellOf(Vector3 position)
-            {
-                XYZ p = XYZ.FromVector3(position);
-                foreach (XYZ q in new[] { p, p - XYZ.up, p + XYZ.up })
-                {
-                    int i = IndexOf(q);
-                    if (i >= 0 && stand0[i]) return i;
-                }
-                return -1;
-            }
-
-            // Case de bord (distance 0) la plus proche de `from` en suivant les cases debout de l'état actuel.
-            public int NearestBorder(int[] r0, int from)
-            {
-                var seen = new HashSet<int> { from };
-                var queue = new Queue<int>();
-                queue.Enqueue(from);
-                while (queue.Count > 0)
-                {
-                    int i = queue.Dequeue();
-                    if (r0[i] == 0) return i;
-                    int y = i % ny, z = (i / ny) % nz, x = i / strideX;
-                    foreach (int n in Neighbors(i, x, y, z))
-                        if (seen.Add(n)) queue.Enqueue(n);
-                }
-                return -1;
-            }
-
-            private IEnumerable<int> Neighbors(int i, int x, int y, int z)
-            {
-                var offs = new List<int>();
-                if (x + 1 < nx) offs.Add(strideX); if (x > 0) offs.Add(-strideX);
-                if (z + 1 < nz) offs.Add(ny); if (z > 0) offs.Add(-ny);
-                foreach (int o in offs)
-                {
-                    int n = i + o;
-                    if (stand0[n]) { yield return n; continue; }
-                    if (y > 0 && stand0[n - 1]) yield return n - 1;
-                    if (y + 1 < ny && stand0[n + 1]) yield return n + 1;
-                }
-            }
+            Hooks.LogLine(string.Format("{0} plan : {1} ; {2} cases, {3:0.0} ms (pelages {4}, étapes {5}, parcours {6}, voies rapides {7}){8}",
+                tag, state, cells, ms, peels, steps, floods, fast, gc > 0 ? " ; GC pendant le calcul" : ""));
         }
     }
 }

@@ -291,6 +291,22 @@ namespace CastleStory.BuildGoalFix
             int p = WrapRet(module, buildOrder, "Brix.Game.AI.BuildGoal", "PriorityFor", 2, "AfterPriority", true);
             Log("BuildGoal.PriorityFor : " + p + " ret patché(s)");
 
+            // ----- v1.9.2 : Brictron inactifs traversent les alliés -----
+            // T : return Hooks.AfterCanPassThrough(result, this.labor) sur chaque ret de Builder.CanPassThrough
+            MethodDefinition pass = Find(module, "Brix.Game.AI.Builder", "CanPassThrough", 0);
+            FieldDefinition laborField = module.GetType("Brix.Game.AI.Profession").Fields.Single(fd => fd.Name == "labor");
+            var passHook = new MethodReference("AfterCanPassThrough", module.TypeSystem.Boolean, hooks);
+            passHook.Parameters.Add(new ParameterDefinition(module.TypeSystem.Boolean));
+            passHook.Parameters.Add(new ParameterDefinition(laborField.FieldType));
+            int t = WrapReturns(pass, il => new[]
+            {
+                il.Create(OpCodes.Ldarg_0),
+                il.Create(OpCodes.Ldfld, laborField),
+                il.Create(OpCodes.Call, passHook),
+            });
+            Log("Builder.CanPassThrough : " + t + " ret patché(s)");
+            if (t < 1) throw new Exception("Builder.CanPassThrough : aucun ret");
+
             Log(string.Format("IsMatchFor : {0} ret patché(s) ; GetPrepareFunction : {1} ret patché(s) ; TakeSome, EndWork, _GoPickUp, TakeFromEnumerable, ClosestObjectToPickup : entrée patchée ; _ClosestObjectToPickup_Test : {2} ret ; FindOneResource : {3} ret ; journal : Project.Hire {4} ret, IOperableExtender.Hire {5} ret, StoreEverything {6} ret + entrées SendOrder, AbsorbGarnottes, OperationSwitchTask, Recipe.Finish, DropAll, Task.OnFinally ; stockage : _ClosestStorageWithRoomFor_Test {7} ret, StoreEverything {8} ret + entrées ClosestStorageWithRoomFor, GoStoreIn, Task.OnFinally", a, b, e, f, j1, j2, j4, l, n));
         }
 

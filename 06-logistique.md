@@ -328,3 +328,63 @@ Plan validé par l'utilisateur : A, puis B + C s'il reste des palettes entamées
 
 v1.8 (A, `Storage.StartedElsewhere`, clé `CompleteFirst`) : dans le test L, un stockage vide de la ressource est refusé s'il existe un stockage connu (vu par L) déjà entamé de cette ressource, non plein, de la même faction, qui accepte l'objet (`HasRoomFor`), avec de la place libre après réservations, accessible (`Knowledge.CanReach`), à au plus 20 m de plus que le stockage vide. Le reliquat d'un porteur va donc à la palette entamée suivante ; une nouvelle palette n'est entamée que si les entamées sont pleines ou réservées. Effet aussi sur les planches, bûches, granulaires (toute ressource).
 Mesure de contrôle : contenu final des palettes dans les `DEPOSE` (`dest_contenu`) ; attendu : au plus une palette entamée par ressource.
+
+## 13. v1.9 : ordre de construction global (2026-10-19)
+
+Point de départ : test v1.8 (`patch/verify/buildgoalfix-2026-10-19-v1.8.log`, `logistique-2026-10-19-v1.8.log`). Tour 6×6 (x 543..548, z 715..720, y 101..104) : la 4e rangée devient inaccessible, (71) et (72) partent quand même → `PathExecutionFailed` (26 m chacune) ; fin : 11 Blueprints restants dont 8 inaccessibles, 0 reporté. v1.6.2 ne pouvait pas l'éviter (futurs évalués dans l'état « dessous posé », déjà inaccessibles). Calcul : 1-3 ms, ~40 ms toutes les 30 s (`FindObjectsOfType`), deux pics de 607/613 ms sur des calculs ordinaires (5 200-5 760 cases) → hypothèse GC [D, non prouvée].
+
+### 13.1 Règles lues dans les données [O]
+
+- Formes des Blueprints extraites (level15/level17) dans `patch/verify/buildsim/shapes.json`. `Stone_DoubleBrick` : poseur sur une case voisine horizontale, de 2 voxels plus bas à 1 voxel plus haut que la brique → brique en y 104 posée depuis y ≥ 102, donc depuis le haut du mur. **Une tour fermée de 4 rangées sans escalier n'est pas entièrement constructible.**
+- `ValidatorComponent.MaxMissingSupport` : 1 pour double brique, double créneau, planches, poutres ; 0 pour brique simple, créneau simple, porte. Un Blueprint posé sur un Blueprint non construit n'est pas constructible. Planches et poutres se soutiennent mutuellement (cycles à traiter).
+- Créneaux, poutres, entretoises, colonnes, parapets, arcs : pleins, mais leur dessus ne compte pas comme sol (cause probable des `PathExecutionFailed` v1.6 [D]).
+
+### 13.2 Algorithme (`BuildPlanCore.cs` sans Unity, `BuildOrder.cs` côté jeu)
+
+1. Modèle : case debout, 4 voisins, ±1 voxel, coûts du pathfinder (10, +240 montée, +160 descente) ; porte passable, escalier = pente.
+2. Groupes de Blueprints dont les emprises (avec marges) se touchent ; une grille et un plan par groupe.
+3. Supports : Blueprint ordinaire après tous ses supports Blueprint ; planche/poutre : au moins un appui ancré ; sans support possible → signalé.
+4. Pelage à rebours depuis l'état final : retrait d'un Blueprint si rien ne repose dessus et si toutes ses cases d'accès « probables » (coût ≤ min + 200) restent reliées au bord ; ordre = inverse du retrait.
+5. Blocage : le plus haut retirable est déclaré non constructible, on recommence ; après 4 reprises, toute la rangée est exclue. Exclusions conservées jusqu'à l'ajout d'un Blueprint.
+6. Garde à l'attribution de X : poseur et poseurs déjà attribués ni coupés ni enfermés, maintenant et après les poses en cours ; les Blueprints prévus avant X restent constructibles. Cache par état ; test « Brictron enfermés » refait à chaque appel ; évacuation des Brictron dans une poche qui va se fermer.
+7. Blueprint inaccessible selon le modèle : refusé (`CantReach`), plus seulement journalisé.
+8. Voies rapides : attribution d'un X déjà testé, pose d'un Blueprint attribué (un seul parcours). Recalcul complet sur échec, annulation, nouveau Blueprint ou délai de 3 s.
+9. Budgets : tests d'attribution ≤ 2 ms/frame ; lecture des voxels étalée au-delà de 12 000 cases (2 ms/frame) ; relecture continue 0,1 ms/frame/groupe ; > 600 000 cases → contrôle levé pour le groupe. Plus de `FindObjectsOfType`, pas d'allocation dans les boucles.
+10. Sécurité : 10 s sans attribution autorisée ni pose en cours alors qu'il reste un Blueprint non signalé → contrôle levé pour le groupe (journalisé).
+
+Journal `BuildGoalFix.log` : `[Ordre #id] NON CONSTRUCTIBLE sans escalier ou appui : N Blueprint(s) : nom (raison)` (raisons : « inaccessible une fois le reste construit (escalier manquant ?) », « sans support ») ; ligne `plan :` (Blueprints, groupes, attribués, sans accès, non constructibles, cases, ms, voies rapides).
+
+### 13.3 Validation hors jeu
+
+Simulateur `patch/verify/buildsim/` (`run.py`, `scenarios.py`, `sim.py`, `world.py`, `buildorder.py`, `export.py`, harnais C# `cs/`). 15 scénarios × 6 graines : 0 Blueprint bloqué, 0 Brictron enfermé, aucune sécurité déclenchée. v1.8 et vanilla bloquent ou enferment sur 6 scénarios (dont `reel_v18`, reproduction du journal : 10 bloqués). Tour sans escalier : 37/40 posées (mur utilisé comme marche), 3 signalées. Durées égales à vanilla sur les cas simples. C# = Python sur 42/42 instantanés (`PlanHarness`, .NET 8). Temps .NET 8 : calcul complet 0,1-1,7 ms (pire : maison 85 Blueprints, 6 615 cases), test d'attribution 0,02-0,6 ms ; 1 à 5 calculs complets par chantier. Mono non mesuré (estimation ×2-4 → 3-7 ms au pire [D]).
+
+Rejouer : `python -I run.py --seeds 6 --variants v1.9,v1.8,vanilla -v` ; `python -I export.py cases 15 ; python -I export.py --cost cases ; dotnet run -c Release --project cs -- cases 20` (attendu : 0 différent).
+
+### 13.4 Risques et non couvert
+
+Bloc posé sur un Brictron (comportement inconnu, simulateur pessimiste) ; choix de la case d'accès modélisé depuis le bord (palettes à moins de 6 cases → poche résiduelle possible) ; appui des planches simplifié (le jeu exige poutre/rondin à ≤ 4 cases ; filet : sécurité de 10 s) ; dessus des créneaux non praticable (prudent, peut sur-signaler) ; partie Unity (regroupement, voies rapides, lecture des voxels) non exécutée hors jeu ; hypothèse GC non prouvée, `ComputeStats` et `IsProjectCovered` allouent encore. Non couvert : rampes, échelles, pente, arbres, démolitions (`IsAnti`).
+
+Installée le 2026-10-19 à 17:44 (`patch/build.sh`, 29/29 appels résolus, firstpass patché inchangé `e0372b7d…`). Installeur `CastleStoryPatch` non reconstruit (`package.sh`).
+
+À mesurer au test : `Hooks v1.9 chargés` ; `plan : … Y ms` ≤ 5 ms ; tour sans escalier → `NON CONSTRUCTIBLE` (1 à 10 briques de la 4e rangée), reste posé, 0 `PathExecutionFailed` sur la tour, aucun Brictron bloqué sur le mur ; `Évacuation :` suivies d'une vraie descente ; aucune ligne « contrôle levé » ni « zone trop grande » ; durée murs/maison comparée à v1.8 ; escalier ajouté après coup → briques signalées réévaluées puis posées.
+
+### 13.5 Test v1.9 (2026-10-19, 17:45 → 17:51) et v1.9.1
+
+Copies : `patch/verify/*-2026-10-19-v1.9.log`. Constat utilisateur : tour non construite (un 5e niveau ajouté pendant la construction). Journal : 0 `PathExecutionFailed` sur le chantier, calculs 0,2-5,7 ms (plus de gel). Mais des briques des rangées intermédiaires passent « sans support » à tort et y restent : (27) en 554,102,719 repose sur (4) et (5), posées à 17:48:54 et 17:48:56, exclue au calcul de 17:48:57 ; (28) sur (8) posée à 17:48:57, exclue à 17:49:04 ; puis (38), (52), (42), (51) (cascade déduite). L'ajout de la 5e rangée (17:49:51) vide les exclusions retenues : (28) et (38) sont réattribuées, mais la 5e rangée est entièrement « inaccessible » (conforme, sans escalier). Fin : 20 restants, 19 non constructibles.
+
+Cause [O journal + simulateur, mécanisme D] : le Blueprint posé quitte la liste avant que son bloc soit lisible dans les voxels ; le recalcul complet voit un support vide → « sans support », rendu permanent par `Sticky` ; un exclu ne compte plus comme support → cascade.
+
+v1.9.1 : 1) « sans support » jamais mémorisé (`Sticky` ne retient que « inaccessible », vidé à l'ajout d'un Blueprint) ; 2) un Blueprint attribué qui disparaît de la liste entre dans `plan.Pending` : ses cases comptent comme posées (`PlanGrid.AssumePlaced`, `ApplyPending` au début de chaque calcul) jusqu'à ce que `BuiltInWorld` voie le bloc (5 s au plus, 64 entrées).
+Simulateur : retard de lecture (`read_lag`) et événements de projet ; scénarios `reel_v19_tour5_relecture` (v1.9 : 10 posées / 30 signalées ; v1.9.1 : rangées 1-3 complètes + 2,8 de la 4e, 17,2 « inaccessible », 0 enfermé) et `reel_v19_tour5_escalier` (v1.9.1 : 65/65). Batterie des 15 scénarios identique à v1.9 ; sans retard v1.9.1 = v1.9. C# = Python 50/50. Installée le 2026-10-19 à 18:35.
+Risques : recalcul complet à chaque pose lue en retard (31-61 par chantier au simulateur, 0,3-1,9 ms chacun) ; Blueprint attribué annulé : cases pleines jusqu'à 5 s (fausse exclusion « inaccessible » possible, non testé). Hors périmètre, déjà en v1.9 : avec escalier, sur 12 graines, échecs de trajet groupés (brique de 5e rangée posée pendant que des briques de 4e sont en route) et un enfermement (graine 11).
+
+À mesurer : `Hooks v1.9.1 chargés` ; « sans support » seulement au-dessus d'une brique « inaccessible » ; tour sans escalier : rangées 1-3 complètes, une partie de la 4e, reste signalé, 0 `PathExecutionFailed` ; `plan :` ≤ 5 ms ; escalier ajouté ensuite → tout posé.
+
+## 14. v1.9.2 : Brictron inactifs traversent les alliés (2026-10-19)
+
+Constat utilisateur : des Brictron se bloquent entre eux dans certaines situations. Test v1.9.1 (`patch/verify/*-2026-10-19-v1.9.1.log`) : « sans support » transitoire corrigé ((27) rétablie en 5 s), rangées 1-3 montées sans échec ; mais 5 Brictron restés sur le haut du mur (y 103-105) après usage du mur comme marche, évacuations en `PathExecutionFailed` (problème non traité ici ; piste : saut d'évacuation `Order.Move.TurnAndJumpToward`, `Builder.CanJumpOff` faux, pas de dégâts de chute trouvés).
+
+Mécanisme [O, décompilation `decomp/firstpass`] : le mode de collision est choisi par le marcheur, via `Profession.CanPassThrough()` (`Navigation.NavigateOrderData.Init`, `Locomotion4.RepathMoveNext`, `LocomotionMovementState.CanPassThroughBlocker`, `Labor.Unstack`). `VoxelPresence.OthersCanPassThroughMe` est toujours vrai ; `PreventsMovement` laisse passer un allié si le marcheur est passeur. `Builder.CanPassThrough` = `Activity != Fighting && Activity != Chilling && (IsWorker() || hackedDigGoal libéré)`. Un Brictron qui flâne (`Chilling` : errance, assis au ralliement) n'est donc pas passeur : face à un Brictron immobile, `TryPushingForward` échoue aussitôt (`IsIdleBlocker`), sinon après ~2 s d'attente (`WaitActively`, 20 × 0,1 s) ; halte, nouvelle recherche, éventuellement `PathUnfindable` → `SignalOutOfReach` sur la cible [D]. Les Brictron au travail traversent déjà les alliés. `Profession.CanMakeWay` = forcer le passage (casser voxels, portes), faux pour Builder, sans rapport.
+
+v1.9.2, hook T : chaque `ret` de `Builder.CanPassThrough` → `Hooks.AfterCanPassThrough(result, this.labor)` = `result || Activity == Chilling` (clé `PassThroughIdle`, défaut true). Combat (`Fighting`), ennemis et neutres (test d'alliance) inchangés. `Labor.Unstack` teste sa propre case avec `CollideWithEveryone` (séparation des Brictron empilés inchangée) ; seule différence : un Brictron empilé qui flâne et marche n'est plus séparé (il s'en va déjà). Vérif : 30/30 appels de hooks résolus, installée le 2026-10-19.
+À observer : moins de Brictron oisifs immobilisés face à face ; plus d'empilement possible (cosmétique) ; `PathExecutionFailed` des tâches `IdleProject`.

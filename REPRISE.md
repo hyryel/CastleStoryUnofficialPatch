@@ -21,7 +21,7 @@
 | Node | nvm, v24.22 |
 | .NET SDK | 8.0.426 dans `~/.dotnet` (hors PATH) |
 | ilspycmd | 9.1.0.7988 → via `tools/decomp.sh <Type> [dll]` |
-| Agents | `.claude/agents/` (symlink `Castle Story/.claude`) : `re-meta` (haiku/low), `re-lua` (haiku/low), `re-rea` (sonnet/medium), `re-analyst` (sonnet/high). **Chargés après redémarrage** |
+| Agents | `.claude/agents/` (symlink `Castle Story/.claude`) : `re-meta` (haiku/low), `re-lua` (haiku/low), `re-rea` (sonnet/medium), `re-analyst` (sonnet/high), `re-buildplan` (opus/high : ordre de construction validé sur simulateur avant tout test en jeu). **Chargés après redémarrage** |
 
 ## Fichiers
 
@@ -97,7 +97,13 @@
 | v1.7 (installée, effet au prochain lancement) | Délais de réflexion : échec 30→8 ticks, succès 10→4, LookForWork 10→4 (attentes et période), anti-rafale 1-15 → 1-8 ; clé `FastThinking`. Détail : 06 §11 |
 | v1.8 (installée, effet au prochain lancement) | Palettes : A « compléter avant d'entamer » (clé `CompleteFirst`, test L). B (regroupement) + C (seuil) validés, à faire seulement s'il reste des palettes entamées. Détail : 06 §12 |
 | Installeur autonome (2026-10-19) | `patch/CastleStoryPatch/` (projet), `patch/package.sh` → `patch/dist/CastleStoryPatch-<version>/{win-x64,linux-x64}/` + `LISEZMOI.txt` (exécutable unique ~35 Mo, runtime .NET inclus, DLL des hooks embarquée ; `dist/` ignoré par git). Commandes `install` (défaut, double-clic), `restore`, `status` ; jeu trouvé via argument, dossier courant/de l'exe ou bibliothèques Steam (registre + `libraryfolders.vdf`, chemins Linux usuels) ; refus si le jeu tourne depuis ce dossier ; contrôle de résolution des appels avant remplacement. Testé sous Windows sur une copie du jeu (install = installation de dev, réinstall, status, restore) ; binaire Linux non testé |
-| Prochaine action | Test v1.6.2 + v1.7 + v1.8 : mur de 4 rangées et plus (`coupe … (à venir)`, ms) ; réactivité, charge CPU ; creusement long puis arrêt : palettes entamées restantes (contenu final par palette dans `DEPOSE`). Selon résultat : B + C. Deux chantiers simultanés toujours à faire |
+| Test v1.8 (2026-10-19) | Copies : `patch/verify/*-2026-10-19-v1.8.log`. Tour 6×6 de 4 rangées : 4e rangée inaccessible, 2 `PathExecutionFailed` (26 m chacun), 11 Blueprints restants dont 8 inaccessibles. Calcul 1-3 ms, 40 ms / 30 s, pics 607/613 ms (GC ? non prouvé). Détail : 06 §13 |
+| v1.9 (installée 2026-10-19 17:44, effet au prochain lancement) | Ordre de construction global : formes réelles des Blueprints et `MaxMissingSupport` lus dans les données ; pelage à rebours depuis l'état final ; Blueprints non constructibles (tour fermée sans escalier) signalés `NON CONSTRUCTIBLE` et jamais attribués ; garde d'attribution anti-enfermement ; voies rapides, budget 2 ms/frame, plus de `FindObjectsOfType` ; sécurité 10 s. Fichiers : `BuildOrder.cs` (réécrit), `BuildPlanCore.cs` (nouveau), `Hooks.cs`. Validé sur simulateur `patch/verify/buildsim/` (15 scénarios × 6 graines, 0 blocage, 0 enfermé ; C# = Python 42/42). Installeur `CastleStoryPatch` non reconstruit. Détail : 06 §13 |
+| Test v1.9 (2026-10-19, 17:45) | Tour non construite : briques intermédiaires « sans support » à tort (pose pas encore lisible dans les voxels) rendues permanentes par `Sticky`, cascade ; 5e rangée ajoutée en cours, « inaccessible » (sans escalier). 0 `PathExecutionFailed` chantier, calcul ≤ 5,7 ms. Détail : 06 §13.5 |
+| v1.9.1 (installée 2026-10-19 18:35) | « sans support » jamais mémorisé ; Blueprint attribué disparu = posé jusqu'à lecture du bloc (`Pending`, 5 s max). Simulateur : retard de lecture + rangée ajoutée en cours, 2 scénarios ; batterie inchangée ; C# = Python 50/50. Défaut connu hors périmètre : avec escalier, échecs de trajet groupés et un enfermement sur 1 graine sur 12. Détail : 06 §13.5 |
+| Test v1.9.1 (2026-10-19, 18:56) | « sans support » transitoire corrigé ; rangées 1-3 montées sans échec ; 5 Brictron coincés sur le haut du mur (marche provisoire), évacuations en échec. Piste non retenue pour l'instant : saut d'évacuation (`TurnAndJumpToward`). Détail : 06 §14 |
+| v1.9.2 (installée 2026-10-19) | Brictron inactifs (`Chilling`) traversent les alliés : hook T sur `Builder.CanPassThrough`, clé `PassThroughIdle`. 30/30 appels résolus. Détail : 06 §14 |
+| Prochaine action | Test v1.9.2 : blocages entre Brictron oisifs disparus ? empilements gênants ? Tour : de préférence avec escalier dès le départ (fin de tour attendue). Brictron coincés sur le mur : décider (interdire la marche provisoire ou saut d'évacuation). Puis commit 1.9 → 1.9.2 et `package.sh`. Toujours à faire : palettes entamées (B + C), deux chantiers simultanés |
 
 ## Notes pour plus tard
 
