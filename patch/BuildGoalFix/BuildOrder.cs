@@ -35,6 +35,10 @@ namespace CastleStory.BuildGoalFix
     //   cases d'accès (distance au bord) dans l'état final (tous les Blueprints construits) ; un Blueprint
     //   inaccessible dans l'état final (pièce fermée) passe en tête. Bonus ajouté à BuildGoal.PriorityFor.
     // Calcul par projet, mis en cache : refait si la liste des Blueprints change ou au bout de Refresh secondes.
+    // v1.6.2 : victimes protégées étendues aux Blueprints pas encore constructibles du projet (rangées du dessus,
+    //          BuildGoalProvider.TrackedBlueprints), évalués dans l'état « rangées du dessous posées » ; Blueprints
+    //          déjà attribués (Task vivante) comptés comme posés ; registre des Brictron sans FindObjectsOfType
+    //          à chaque calcul (≈ 40 ms).
     // v1.6.1 : carte des cases debout précalculée une fois par calcul ; un test de coupure ne réévalue que les
     //          cases touchées par la pose (parcours sur index) : 647 ms → quelques ms (gel régulier du jeu).
     public static class BuildOrder
@@ -56,6 +60,9 @@ namespace CastleStory.BuildGoalFix
             public List<XYZ> Cells = new List<XYZ>();   // deviennent pleines (vide pour une porte)
             public List<XYZ> Access = new List<XYZ>();
             public bool Reach;
+            public bool Future;     // pas encore constructible (support absent) : victime seulement
+            public bool InFlight;   // Task vivante : compté comme posé
+            public int MinY;
             public bool Allowed = true;
             public string CutVictim;
             public int Bonus;
@@ -75,7 +82,6 @@ namespace CastleStory.BuildGoalFix
 
         private static readonly Dictionary<BuildGoalProvider, Plan> Plans = new Dictionary<BuildGoalProvider, Plan>();
         private static readonly Dictionary<Labor, float> LastEvacuation = new Dictionary<Labor, float>();
-        private static Labor[] _labors = new Labor[0];
         private static float _laborsTime = -100f;
 
         // --- API pour les hooks ---
@@ -130,14 +136,15 @@ namespace CastleStory.BuildGoalFix
             // Même frame : pas de relecture de la liste des Blueprints (IsMatchFor/PriorityFor appelés pour chaque goal).
             if (known && plan.Frame == UnityEngine.Time.frameCount) return plan;
             List<BuildGoal> goals = Hooks.ProjectGoalsOf(goal);
-            string sig = Signature(goals);
+            List<BuildGoal> future = FutureGoals(provider, goals);
+            string sig = Signature(goals, future);
             if (known && plan.Signature == sig && UnityEngine.Time.time - plan.Time < Refresh)
             {
                 plan.Frame = UnityEngine.Time.frameCount;
                 return plan;
             }
             if (Plans.Count > 32) Plans.Clear();
-            Plan fresh = Compute(goals);
+            Plan fresh = Compute(goals, future);
             fresh.Signature = sig;
             fresh.Time = UnityEngine.Time.time;
             fresh.Frame = UnityEngine.Time.frameCount;
@@ -147,36 +154,53 @@ namespace CastleStory.BuildGoalFix
             return fresh;
         }
 
-        private static string Signature(List<BuildGoal> goals)
+        // Liste des Blueprints, Blueprints futurs, et lesquels sont attribués : tout changement relance le calcul.
+        private static string Signature(List<BuildGoal> goals, List<BuildGoal> future)
         {
             int h = goals.Count;
-            foreach (BuildGoal g in goals) h = h * 31 + (g != null ? g.GetInstanceID() : 0);
-            return goals.Count + ":" + h;
+            foreach (BuildGoal g in goals)
+                h = h * 31 + (g != null ? g.GetInstanceID() * (Hooks.HasLiveWorker(g) ? 3 : 1) : 0);
+            foreach (BuildGoal g in future) h = h * 17 + (g != null ? g.GetInstanceID() : 0);
+            return goals.Count + ":" + future.Count + ":" + h;
         }
 
-        private static Plan Compute(List<BuildGoal> goals)
+        // Blueprints commités du projet qui ne sont pas encore constructibles (absents de Provider.All()).
+        private static List<BuildGoal> FutureGoals(BuildGoalProvider provider, List<BuildGoal> current)
+        {
+            var list = new List<BuildGoal>();
+            var known = new HashSet<BuildGoal>(current);
+            foreach (Blueprint b in provider.TrackedBlueprints)
+            {
+                if (b == null || b.IsNullOrReleased()) continue;
+                BuildGoal g = b.GetComponent<BuildGoal>();
+                if (g == null || g.IsAnti || !g.Commited || known.Contains(g)) continue;
+                list.Add(g);
+            }
+            return list;
+        }
+
+        private static Plan Compute(List<BuildGoal> goals, List<BuildGoal> future)
         {
             var plan = new Plan();
             var sw = Stopwatch.StartNew();
             var infos = new List<GoalInfo>();
-            foreach (BuildGoal g in goals)
-            {
-                if (g == null || g.IsNullOrReleased() || g.IsAnti || g.volume == null) continue;
-                var info = new GoalInfo { Goal = g };
-                if (!IsPassable(g)) foreach (XYZ c in g.volume.blueprint) info.Cells.Add(c);
-                foreach (XYZ a in g.volume.access) info.Access.Add(a);
-                infos.Add(info);
-                plan.Infos[g] = info;
-            }
+            foreach (BuildGoal g in goals) AddInfo(plan, infos, g, false);
+            foreach (BuildGoal g in future) AddInfo(plan, infos, g, true);
             if (infos.Count == 0) return plan;
 
             var grid = Grid.Build(infos);
             if (grid == null) { plan.Disabled = true; plan.Note = "zone trop grande, contrôle levé"; return plan; }
 
-            // État actuel.
-            int[] r0 = grid.Flood(null);
+            // État de base : monde actuel + Blueprints déjà attribués (ils seront posés quoi qu'il arrive).
+            var baseCells = new List<XYZ>();
+            foreach (GoalInfo i in infos) if (i.InFlight) baseCells.AddRange(i.Cells);
+            int[] r0 = grid.Flood(baseCells);
             int reachable = 0;
-            foreach (GoalInfo i in infos) { i.Reach = grid.AnyIn(r0, i.Access); if (i.Reach) reachable++; }
+            foreach (GoalInfo i in infos)
+            {
+                i.Reach = grid.AnyIn(r0, i.Access);
+                if (i.Reach && !i.Future) reachable++;
+            }
             if (reachable == 0)
             {
                 plan.Disabled = true;
@@ -192,31 +216,59 @@ namespace CastleStory.BuildGoalFix
                     int cell = grid.StandCellOf(l.transform.position);
                     if (cell >= 0 && r0[cell] >= 0) people.Add(new KeyValuePair<Labor, int>(l, cell));
                 }
+                // Blueprints futurs : évalués dans l'état « tout ce qui est plus bas posé » (un état par hauteur).
+                var levels = new Dictionary<int, Level>();
+                foreach (GoalInfo g in infos)
+                {
+                    if (!g.Future) continue;
+                    Level lv;
+                    if (!levels.TryGetValue(g.MinY, out lv))
+                    {
+                        var cells = new List<XYZ>(baseCells);
+                        foreach (GoalInfo o in infos) if (!o.InFlight && o.MinY < g.MinY) cells.AddRange(o.Cells);
+                        lv = new Level { Y = g.MinY, Cells = cells };
+                        lv.Reach = grid.Flood(cells);
+                        levels[g.MinY] = lv;
+                    }
+                    if (grid.AnyIn(lv.Reach, g.Access)) lv.Victims.Add(g);
+                }
                 var trapped = new HashSet<Labor>();
-                // (b) Coupure : un parcours par Blueprint accessible qui occupe une case debout de R0 (ou sa tête).
+                // (b) Coupure : un parcours par Blueprint candidat qui occupe une case debout reliée (ou sa tête).
                 int allowed = 0;
                 foreach (GoalInfo x in infos)
                 {
-                    if (!x.Reach) continue;
+                    if (x.Future) continue;
+                    if (!x.Reach || x.InFlight) { allowed++; continue; }
                     if (grid.TouchesReach(r0, x.Cells))
                     {
-                        int[] rx = grid.Flood(x.Cells);
-                        if (!grid.AnyIn(rx, x.Access)) { x.Allowed = false; x.CutVictim = "celui qui le pose"; }
-                        if (x.Allowed)
-                            foreach (GoalInfo g in infos)
-                            {
-                                if (g == x || !g.Reach || grid.AnyIn(rx, g.Access)) continue;
-                                x.Allowed = false;
-                                x.CutVictim = g.Goal.name;
-                                break;
-                            }
+                        var withX = new List<XYZ>(baseCells);
+                        withX.AddRange(x.Cells);
+                        int[] rx = grid.Flood(withX);
+                        if (!grid.AnyIn(rx, x.Access)) Refuse(x, "celui qui le pose");
+                        foreach (GoalInfo g in infos)
+                        {
+                            if (!x.Allowed) break;
+                            if (g == x || g.Future || !g.Reach || grid.AnyIn(rx, g.Access)) continue;
+                            Refuse(x, g.Goal.name);
+                        }
                         foreach (var kv in people)
                         {
                             // Brictron debout sur la case posée (ou dessous) : simple passage, pas un enfermement.
                             if (rx[kv.Value] >= 0 || grid.Covers(x.Cells, kv.Value)) continue;
                             trapped.Add(kv.Key);
-                            if (x.Allowed) { x.Allowed = false; x.CutVictim = "Brictron " + kv.Key.name; }
+                            Refuse(x, "Brictron " + kv.Key.name);
                         }
+                    }
+                    // Victimes futures : X posé dans l'état de leur hauteur (X plus bas y est déjà compris).
+                    foreach (Level lv in levels.Values)
+                    {
+                        if (!x.Allowed) break;
+                        if (lv.Victims.Count == 0 || x.MinY < lv.Y || !grid.TouchesReach(lv.Reach, x.Cells)) continue;
+                        var cells = new List<XYZ>(lv.Cells);
+                        cells.AddRange(x.Cells);
+                        int[] rl = grid.Flood(cells);
+                        foreach (GoalInfo g in lv.Victims)
+                            if (!grid.AnyIn(rl, g.Access)) { Refuse(x, g.Goal.name + " (à venir)"); break; }
                     }
                     if (x.Allowed) allowed++;
                 }
@@ -253,15 +305,53 @@ namespace CastleStory.BuildGoalFix
             return plan;
         }
 
-        // Brictron de la zone (rafraîchi toutes les 2 s : FindObjectsOfType est coûteux).
-        private static Labor[] Labors()
+        private sealed class Level
         {
-            if (UnityEngine.Time.time - _laborsTime > 2f)
+            public int Y;
+            public List<XYZ> Cells;
+            public int[] Reach;
+            public List<GoalInfo> Victims = new List<GoalInfo>();
+        }
+
+        private static void AddInfo(Plan plan, List<GoalInfo> infos, BuildGoal g, bool future)
+        {
+            if (g == null || g.IsNullOrReleased() || g.IsAnti || g.volume == null || plan.Infos.ContainsKey(g)) return;
+            var info = new GoalInfo { Goal = g, Future = future, InFlight = !future && Hooks.HasLiveWorker(g), MinY = int.MaxValue };
+            if (!IsPassable(g)) foreach (XYZ c in g.volume.blueprint) { info.Cells.Add(c); if (c.y < info.MinY) info.MinY = c.y; }
+            foreach (XYZ a in g.volume.access) info.Access.Add(a);
+            if (info.MinY == int.MaxValue) info.MinY = (int)g.transform.position.y;
+            infos.Add(info);
+            plan.Infos[g] = info;
+        }
+
+        private static void Refuse(GoalInfo x, string victim)
+        {
+            if (!x.Allowed) return;
+            x.Allowed = false;
+            x.CutVictim = victim;
+        }
+
+        // Registre des Brictron : FindObjectsOfType (≈ 40 ms) toutes les 30 s seulement, complété par le signal
+        // Labor.LaborStarted ; les Brictron morts sont filtrés à l'usage. Le signal est rebranché quand le temps de jeu
+        // repart en arrière (nouvelle partie : GameSignals vide ses abonnés à la destruction de la scène).
+        private static readonly HashSet<Labor> KnownLabors = new HashSet<Labor>();
+        private static readonly List<Labor> LaborScratch = new List<Labor>();
+
+        private static List<Labor> Labors()
+        {
+            float now = UnityEngine.Time.time;
+            if (now - _laborsTime > 30f || now < _laborsTime)
             {
-                _labors = UnityEngine.Object.FindObjectsOfType<Labor>();
-                _laborsTime = UnityEngine.Time.time;
+                bool reconnect = now < _laborsTime || _laborsTime < 0f;
+                KnownLabors.Clear();
+                foreach (Labor l in UnityEngine.Object.FindObjectsOfType<Labor>()) KnownLabors.Add(l);
+                if (reconnect) GameSignals.Connect(Labor.LaborStarted, (Labor l) => { if (l != null) KnownLabors.Add(l); });
+                _laborsTime = now;
             }
-            return _labors;
+            LaborScratch.Clear();
+            KnownLabors.RemoveWhere(l => l == null || l.IsNullOrReleased());
+            LaborScratch.AddRange(KnownLabors);
+            return LaborScratch;
         }
 
         // Brictron inactif qui serait enfermé par une pose à venir : ordre de marcher vers le bord de la zone
@@ -312,6 +402,7 @@ namespace CastleStory.BuildGoalFix
             var names = new List<string>();
             foreach (GoalInfo i in plan.Infos.Values)
             {
+                if (i.Future) continue;
                 if (!i.Reach) { unreachable++; if (names.Count < 6) names.Add(i.Goal.name + " inaccessible"); }
                 else if (!i.Allowed) { deferred++; if (names.Count < 6) names.Add(i.Goal.name + " coupe " + i.CutVictim); }
             }

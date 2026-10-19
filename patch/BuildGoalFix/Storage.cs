@@ -23,12 +23,21 @@ namespace CastleStory.BuildGoalFix
     //     la charge du Brictron sur le stockage retenu.
     //   N ret de Transaction.StoreEverything(from, into, upTo)            → AfterStore : dépôt fait → libération.
     //   O entrée Task.OnFinally                                           → OnTaskEnd : fin de la Task qui a réservé.
+    // v1.8 (palettes, proposition A, clé CompleteFirst) : compléter avant d'entamer. Dans L, un stockage vide de la
+    //   ressource est refusé s'il existe un stockage connu déjà entamé de cette ressource, de la même faction,
+    //   accessible, avec de la place libre (réservations déduites), à moins de CompleteSlack mètres de plus que lui.
+    //   But : une palette de pierre atteint 80 (conversion en 4 blocs) au lieu de plusieurs palettes entamées.
     // Réservations expirées au bout de MaxAge secondes ou si le Brictron est détruit / n'a plus la ressource.
     // État serveur uniquement, non sérialisé, aucun message réseau.
     public static class Storage
     {
         public static bool Enabled;
+        public static bool CompleteFirst;
         private const float MaxAge = 90f;
+        private const float CompleteSlack = 20f;
+
+        // Stockages vus par le test L (le jeu n'en tient pas de liste accessible).
+        private static readonly HashSet<Recepteur> KnownStorages = new HashSet<Recepteur>();
 
         // Enabled est posé par le constructeur statique de Hooks (lecture de BuildGoalFix.cfg).
         static Storage() { Hooks.EnsureLoaded(); }
@@ -58,11 +67,15 @@ namespace CastleStory.BuildGoalFix
                 if (!result || !Enabled || gc == null || item == null) return result;
                 Recepteur r = gc.recepteur;
                 if (r == null || r.Fonction != FonctionDeContenant.entrepot) return result;
+                if (KnownStorages.Count > 512) KnownStorages.RemoveWhere(x => x == null || x.IsNullOrReleased());
+                KnownStorages.Add(r);
                 Labor self = _searcher != null && !_searcher.IsNullOrReleased() ? _searcher : null;
                 Ressource res = Apparence.PrincipaleOf(item);
                 if (res == null) return result;
                 int room = Room(r, item, res);
-                return room < 0 || room - Reserved(r, res.GetType(), self) > 0;
+                if (room >= 0 && room - Reserved(r, res.GetType(), self) <= 0) return false;
+                if (CompleteFirst && self != null && StartedElsewhere(r, gc, item, res, self)) return false;
+                return true;
             }
             catch (Exception e) { Hooks.LogError(e); return result; }
         }
@@ -121,6 +134,32 @@ namespace CastleStory.BuildGoalFix
                 foreach (var kv in Pending) kv.Value.RemoveAll(x => x.Labor == labor && x.Task == task);
             }
             catch (Exception e) { Hooks.LogError(e); }
+        }
+
+        // Vrai si r est vide de la ressource et qu'un autre stockage déjà entamé de cette ressource peut la recevoir.
+        private static bool StartedElsewhere(Recepteur r, IGameComponent gc, IGameComponent item, Ressource res, Labor self)
+        {
+            Type t = res.GetType();
+            if (r.ContentDescription.Value(t) > 0) return false;
+            GameComponent rgc = r.GetComponent<GameComponent>();
+            Faction faction = rgc != null ? rgc.faction : null;
+            Vector3 from = self.transform.position;
+            float limit = Vector3.Distance(from, r.transform.position) + CompleteSlack;
+            GameObject itemGo = item.GameObject;
+            foreach (Recepteur p in KnownStorages)
+            {
+                if (p == null || p == r || p.IsNullOrReleased() || p.Fonction != FonctionDeContenant.entrepot) continue;
+                if (p.ContentDescription.Value(t) <= 0 || p.IsFull()) continue;
+                if (Vector3.Distance(from, p.transform.position) > limit) continue;
+                GameComponent pgc = p.GetComponent<GameComponent>();
+                if (pgc == null || pgc.faction != faction) continue;
+                if (itemGo != null && !p.HasRoomFor(itemGo)) continue;
+                int room = Room(p, item, res);
+                if (room >= 0 && room - Reserved(p, t, self) <= 0) continue;
+                if (Knowledge.Instance != null && !Knowledge.Instance.CanReach(self, pgc)) continue;
+                return true;
+            }
+            return false;
         }
 
         // Place libre pour la ressource, en objets : capacité de la ressource et encombrement (si le stockage en a un).

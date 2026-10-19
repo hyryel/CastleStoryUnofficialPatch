@@ -271,6 +271,20 @@ namespace CastleStory.BuildGoalFix
             // O : entrée de Task.OnFinally → Storage.OnTaskEnd(this)
             Entry(module, storage, "Brix.Game.AI.Task", "OnFinally", 0, "OnTaskEnd", true);
 
+            // ----- v1.7 : délais de réflexion des Brictron (Hooks.FastThinking) -----
+            // Q : Task..ctor : DelayOnFail = Hooks.DelayOnFail(), DelayOnFinished = Hooks.DelayOnFinished()
+            MethodDefinition taskCtor = module.GetType("Brix.Game.AI.Task").Methods.Single(m => m.IsConstructor && !m.IsStatic && m.Parameters.Count == 0);
+            int q = ReplaceConst(module, hooks, taskCtor, 30, i => i.OpCode == OpCodes.Stfld && ((FieldReference)i.Operand).Name == "DelayOnFail", "DelayOnFail")
+                  + ReplaceConst(module, hooks, taskCtor, 10, i => i.OpCode == OpCodes.Stfld && ((FieldReference)i.Operand).Name == "DelayOnFinished", "DelayOnFinished");
+            // R : Labor.LookForWorkSequence : WaitFor.Ticks(10) → WaitFor.Ticks(Hooks.LookForWorkTicks())
+            MethodDefinition look = Find(module, "Brix.Game.AI.Labor", "LookForWorkSequence", 0);
+            int r = ReplaceConst(module, hooks, look, 10, i => i.OpCode == OpCodes.Call && ((MethodReference)i.Operand).Name == "Ticks", "LookForWorkTicks");
+            // S : Labor.Initialize : AddOrSetSequence(LookForWorkSequence(), 10, "LookForWork Sequence") → période Hooks.LookForWorkTicks()
+            MethodDefinition init = module.GetType("Brix.Game.AI.Labor").Methods.Single(m => m.Name == "Initialize" && m.Parameters.Count == 0);
+            int sq = ReplaceConst(module, hooks, init, 10, i => i.OpCode == OpCodes.Ldstr && (string)i.Operand == "LookForWork Sequence", "LookForWorkTicks");
+            Log(string.Format("délais : Task..ctor {0} constante(s), LookForWorkSequence {1}, Initialize {2}", q, r, sq));
+            if (q != 2 || r < 1 || sq != 1) throw new Exception("Délais : constantes attendues introuvables");
+
             // ----- v1.6 : plan de construction (classe BuildOrder) -----
             // P : return BuildOrder.AfterPriority(result, this, labor, ref time) sur chaque ret de BuildGoal.PriorityFor
             var buildOrder = new TypeReference(HooksAssembly, "BuildOrder", module, asmRef);
@@ -337,6 +351,24 @@ namespace CastleStory.BuildGoalFix
                 seq.Add(il.Create(OpCodes.Call, h));
                 return seq.ToArray();
             });
+        }
+
+        // Remplace chaque constante entière (ldc.i4*) égale à `expected` qui précède immédiatement une instruction `next` par
+        // `call int32 <hooks>.<hook>()`. Retourne le nombre de remplacements.
+        private static int ReplaceConst(ModuleDefinition module, TypeReference hooks, MethodDefinition m, int expected, Func<Instruction, bool> next, string hook)
+        {
+            var h = new MethodReference(hook, module.TypeSystem.Int32, hooks);
+            m.Body.SimplifyMacros();
+            int n = 0;
+            foreach (Instruction i in m.Body.Instructions)
+            {
+                if (i.OpCode != OpCodes.Ldc_I4 || (int)i.Operand != expected || i.Next == null || !next(i.Next)) continue;
+                i.OpCode = OpCodes.Call;
+                i.Operand = h;
+                n++;
+            }
+            m.Body.OptimizeMacros();
+            return n;
         }
 
         // Insère `extra` avant chaque ret. Le ret d'origine devient la 1re instruction insérée,

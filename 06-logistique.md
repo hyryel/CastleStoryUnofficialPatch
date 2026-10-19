@@ -289,3 +289,42 @@ Copies : `patch/verify/*-2026-10-19-v1.6.log`. Constat utilisateur : constructio
 | `PathExecutionFailed` BuildProject | 9 échecs / 369 m (v1.5 : 11 / 745 m) ; 6 sur des créneaux et poutres en haut de mur, modèle « accès oui » | Modèle trop permissif en hauteur [D] : les cases posées comptent comme blocs pleins sur lesquels on marche ; les créneaux (`Stone_Merlon*`) et poutres ne le sont probablement pas. Non corrigé (données de forme à lire) |
 | Brictron enfermés | Kadir : 3 `WalkToward` en échec à 494,109,706 | La non-coupure protégeait les Blueprints, pas les Brictron. v1.6.1 : X refusé s'il enfermerait un Brictron aujourd'hui relié au bord, ou si aucune de ses propres cases d'accès ne reste reliée (le poseur) ; un Brictron inactif menacé reçoit `Order.Move.WalkToward` vers la case de bord la plus proche (au plus toutes les 8 s ; journal `Évacuation :`) |
 | Gel | Calcul de 647 ms sur un ordre de 23 Blueprints (6 552 cases, 3 reportés), refait à chaque pose et toutes les 3 s | Un parcours par Blueprint testé, chaque case relisant le voxel. v1.6.1 : cases debout précalculées une fois ; un test ne réévalue que les cases touchées (case posée, dessous, dessus) ; parcours sur index ; liste des Blueprints relue au plus une fois par frame ; calcul ≥ 30 ms toujours journalisé |
+
+### 10.4 Test v1.6.1 (2026-10-19, 14:27 → 14:35) et v1.6.2
+
+Copie : `patch/verify/buildgoalfix-2026-10-19-v1.6.1.log`. Constat utilisateur : accès à la 4e rangée de mur bloqué en fin de construction.
+Journal : Jaws attribué à `Stone_DoubleBrick (82)` à 14:34:34 (légitime) ; 87 et 88 n'apparaissent qu'à 14:34:40 (constructibles une fois la rangée du dessous posée) ; 82 posé → 87/88 `PathExecutionFailed` (14:35:17). Le calcul ne voyait que `Provider.All()` (Blueprints constructibles). Calcul ≈ 40 ms à chaque fois, 1-2 ms quand `FindObjectsOfType<Labor>` (cache 2 s) n'était pas relancé. 0 `Évacuation`.
+v1.6.2 : victimes étendues aux Blueprints commités non constructibles (`BuildGoalProvider.TrackedBlueprints`), évalués dans l'état « Blueprints plus bas posés » (un état par hauteur) ; Blueprints attribués (Task vivante) comptés comme posés dans l'état de base, et pris dans la signature du cache ; registre des Brictron : `FindObjectsOfType` toutes les 30 s + signal `Labor.LaborStarted`.
+
+## 11. v1.7 : délais de réflexion (2026-10-19)
+
+Constat utilisateur : ~1 s d'attente entre « ne peut pas poser / plus de place » et le demi-tour. Constantes vanilla, en ticks de 20 ms :
+
+| Délai | Vanilla | v1.7 | Code | Patch |
+|---|---|---|---|---|
+| Pause après Task en échec (`DelayOnFail`) | 30 (0,6 s) | 8 | `Task.cs:34`, appliqué à la création (`Catches`, `WaitAfterFailure`) | hook Q : `ldc 30` avant `stfld DelayOnFail` du constructeur → `call Hooks.DelayOnFail()` |
+| Pause après Task réussie (`DelayOnFinished`) | 10 | 4 | `Task.cs:32`, `CoreNode` | hook Q, idem |
+| Attentes de `LookForWorkSequence` (après instinct, après `CheckProjectForWork`) | 2 × 10 | 2 × 4 | `Labor.cs:543-552` | hook R : `ldc 10` avant `WaitFor.Ticks` → `call Hooks.LookForWorkTicks()` (le `Ticks(1)` « rien à faire » est conservé) |
+| Période de la séquence LookForWork | 10 | 4 | `Labor.cs:385` (`AddOrSetSequence(..., 10, ...)`, `MultiBehavior.cs:27-36`) | hook S : `ldc 10` avant `ldstr "LookForWork Sequence"` |
+| Décalage anti-rafale (`OffsetWaitTime`) | 1 à 15 | 1 à 8 | `Labor._tickOffset` 2 (`Labor.cs:146, 288-302`) | réflexion dans le constructeur statique de Hooks |
+
+Les valeurs sont lues à la création de chaque Task : la modification d'un champ après coup serait sans effet (le nœud est construit dans le setter `WorkNode`, `Task.cs:80`).
+Clé `FastThinking` (défaut true ; false = valeurs vanilla, sauf `_tickOffset` déjà modifié si la clé était vraie au chargement).
+Coût : le cycle de recherche d'un Brictron inactif passe de ~20 à ~8 ticks (≈ 2,5 fois plus de `CheckProjectForWork`).
+Vérification : 2 + 2 + 1 constantes remplacées (le Loader échoue sinon), métadonnées identiques, 29/29 appels résolus.
+
+## 12. Palettes entamées (2026-10-19) et v1.8
+
+Constat utilisateur : des palettes de pierre restent sous 80 (pas de conversion en 4 blocs).
+Analyse des `DEPOSE` (pierre, 35 palettes) : pendant le creusement elles atteignent 80 ; il reste une palette entamée par fin de session (16, 6, 39). Causes : (1) le dernier porteur complète une palette puis dépose son reliquat dans la palette libre la plus proche (14:32:25 → 14:32:26) ; (2) quand la place d'une palette est déjà réservée (v1.5), le porteur suivant en entame une autre : remplissage en parallèle (`Palette (11)` et `(43)` à partir de 14:32:26) ; (3) le jeu choisit le stockage le plus proche ayant de la place, sans préférence pour un stockage entamé, et ne regroupe jamais.
+
+Plan validé par l'utilisateur : A, puis B + C s'il reste des palettes entamées.
+
+| # | Proposition | État |
+|---|---|---|
+| A | Compléter avant d'entamer | v1.8, installée |
+| B | Regroupement par un Brictron inactif (palette entamée la moins remplie → autre palette entamée de même ressource) | si A ne suffit pas |
+| C | Seuil : regrouper seulement si le total des palettes entamées complète au moins une palette | avec B |
+
+v1.8 (A, `Storage.StartedElsewhere`, clé `CompleteFirst`) : dans le test L, un stockage vide de la ressource est refusé s'il existe un stockage connu (vu par L) déjà entamé de cette ressource, non plein, de la même faction, qui accepte l'objet (`HasRoomFor`), avec de la place libre après réservations, accessible (`Knowledge.CanReach`), à au plus 20 m de plus que le stockage vide. Le reliquat d'un porteur va donc à la palette entamée suivante ; une nouvelle palette n'est entamée que si les entamées sont pleines ou réservées. Effet aussi sur les planches, bûches, granulaires (toute ressource).
+Mesure de contrôle : contenu final des palettes dans les `DEPOSE` (`dest_contenu`) ; attendu : au plus une palette entamée par ressource.

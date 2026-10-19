@@ -92,7 +92,11 @@
 | v1.6 (installée, effet au prochain lancement) | Ordre de construction (classe `BuildOrder`, clés `BuildReach`/`BuildPlan`, hook P sur `BuildGoal.PriorityFor`) : 1a accès (journal), 1b refus d'un Blueprint dont la pose couperait l'accès d'un autre, 2 bonus « intérieur → extérieur ». Échafaudage auto refusé par l'utilisateur. Détail : 06 §10. Vérif : `patch/verify/grid_sim.py`, 26/26 appels résolus |
 | Test v1.6 (2026-10-19) | Ordre respecté, construction terminée. `PathExecutionFailed` BuildProject 9 / 369 m (v1.5 : 11 / 745 m), surtout créneaux/poutres en hauteur (modèle trop permissif). 2 Brictron enfermés à l'étage. Gel ~0,5 s : calcul de 647 ms. Détail : 06 §10.3 |
 | v1.6.1 (installée, effet au prochain lancement) | Calcul accéléré (cases debout précalculées, test local) ; protection des Brictron (pas d'enfermement, poseur compris) ; évacuation des Brictron inactifs menacés (`Évacuation :` dans BuildGoalFix.log) |
-| Prochaine action | Test v1.6.1 : même construction (étage sans escalier, créneaux) ; vérifier absence de gel, lignes `accès :` (ms), `Évacuation :`, Brictron bloqués. Piste : forme réelle des créneaux/poutres dans le modèle. Deux chantiers simultanés toujours à faire |
+| Test v1.6.1 (2026-10-19) | Plus de gel signalé ; 4e rangée bloquée : Blueprints futurs (pas encore constructibles) non protégés ; calcul ≈ 40 ms (FindObjectsOfType). Détail : 06 §10.4 |
+| v1.6.2 (installée, effet au prochain lancement) | Protection des Blueprints futurs (état « dessous posé »), Blueprints attribués comptés comme posés, registre des Brictron sans FindObjectsOfType à chaque calcul |
+| v1.7 (installée, effet au prochain lancement) | Délais de réflexion : échec 30→8 ticks, succès 10→4, LookForWork 10→4 (attentes et période), anti-rafale 1-15 → 1-8 ; clé `FastThinking`. Détail : 06 §11 |
+| v1.8 (installée, effet au prochain lancement) | Palettes : A « compléter avant d'entamer » (clé `CompleteFirst`, test L). B (regroupement) + C (seuil) validés, à faire seulement s'il reste des palettes entamées. Détail : 06 §12 |
+| Prochaine action | Test v1.6.2 + v1.7 + v1.8 : mur de 4 rangées et plus (`coupe … (à venir)`, ms) ; réactivité, charge CPU ; creusement long puis arrêt : palettes entamées restantes (contenu final par palette dans `DEPOSE`). Selon résultat : B + C. Deux chantiers simultanés toujours à faire |
 
 ## Notes pour plus tard
 

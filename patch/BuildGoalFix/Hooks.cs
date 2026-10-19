@@ -36,6 +36,9 @@ namespace CastleStory.BuildGoalFix
     // v1.4 : journal unifié Logistique.log (Journal.cs, clé LogAll) : embauches de tous projets et stations, Tasks,
     //        ramassages/dépôts effectifs, garnottes, échanges, production, dépôt au sol, fin de Task, distances/odomètre.
     // v1.5 : réservation de capacité des stockages (Storage.cs, clé StorageReserve).
+    // v1.8 : palettes : compléter un stockage entamé avant d'en entamer un autre (Storage.cs, clé CompleteFirst).
+    // v1.7 : délais de réflexion raccourcis (clé FastThinking) : constantes de Task..ctor et de LookForWork remplacées
+    //        par des appels (DelayOnFail, DelayOnFinished, LookForWorkTicks), Labor._tickOffset 2 → 1.
     // v1.6 : ordre de construction (BuildOrder.cs, clés BuildReach / BuildPlan) : Blueprint inaccessible ou dont la
     //        pose couperait l'accès d'un autre → non attribué ; bonus de priorité de l'intérieur vers l'extérieur.
     // Appelé depuis l'IL de Assembly-CSharp-firstpass, réécrit sur disque par BuildGoalFix.Patcher (install.sh).
@@ -67,6 +70,10 @@ namespace CastleStory.BuildGoalFix
         // v1.6 : garde d'accessibilité / non-coupure et plan de construction (BuildOrder.cs).
         private static readonly bool BuildReach;
         private static readonly bool BuildPlan;
+        // v1.7 : délais de réflexion raccourcis (pause après échec / succès, cycle LookForWork, décalage anti-rafale).
+        private static readonly bool FastThinking;
+        // v1.8 : palettes, compléter avant d'entamer (Storage.cs).
+        private static readonly bool CompleteFirst;
 
         private static readonly FieldInfo WorkersField =
             typeof(Goal).GetField("workers", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -88,12 +95,35 @@ namespace CastleStory.BuildGoalFix
             StorageReserve = cfg["StorageReserve"];
             BuildReach = cfg["BuildReach"];
             BuildPlan = cfg["BuildPlan"];
+            FastThinking = cfg["FastThinking"];
+            CompleteFirst = cfg["CompleteFirst"];
+            Storage.CompleteFirst = CompleteFirst;
+            if (FastThinking) SetTickOffset(1);
             Journal.Enabled = LogAll;
             Storage.Enabled = StorageReserve;
             BuildOrder.ReachEnabled = BuildReach;
             BuildOrder.PlanEnabled = BuildPlan;
-            Log(string.Format("Hooks v1.6 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8} StorageReserve={9} BuildReach={10} BuildPlan={11}",
-                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll, StorageReserve, BuildReach, BuildPlan));
+            Log(string.Format("Hooks v1.8 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8} StorageReserve={9} BuildReach={10} BuildPlan={11} FastThinking={12} CompleteFirst={13}",
+                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll, StorageReserve, BuildReach, BuildPlan, FastThinking, CompleteFirst));
+        }
+
+        // --- v1.7 : délais de réflexion (ticks de 20 ms) ; appelés depuis l'IL à la place des constantes vanilla ---
+        // Task..ctor : pause après une Task en échec (vanilla 30 = 0,6 s) et après une Task réussie (vanilla 10).
+        public static int DelayOnFail() { return FastThinking ? 8 : 30; }
+        public static int DelayOnFinished() { return FastThinking ? 4 : 10; }
+        // Labor.LookForWorkSequence (2 attentes) et période de la séquence dans Labor.Initialize (vanilla 10).
+        public static int LookForWorkTicks() { return FastThinking ? 4 : 10; }
+
+        // Labor._tickOffset (vanilla 2) : décalage entre Brictron qui cherchent du travail au même tick
+        // (OffsetWaitTime = (n % 8) * _tickOffset + 1, soit 1 à 15 ticks en vanilla, 1 à 8 avec 1).
+        private static void SetTickOffset(int value)
+        {
+            try
+            {
+                FieldInfo f = typeof(Labor).GetField("_tickOffset", BindingFlags.Static | BindingFlags.NonPublic);
+                if (f != null) f.SetValue(null, value);
+            }
+            catch (Exception e) { Log("Réglage _tickOffset impossible : " + e.Message); }
         }
 
         // Accès pour BuildOrder.
@@ -101,6 +131,15 @@ namespace CastleStory.BuildGoalFix
         internal static void LogLine(string msg) { Log(msg); }
         internal static string OrderTagOf(BuildGoal goal) { return OrderTag(goal); }
         internal static List<BuildGoal> ProjectGoalsOf(BuildGoal goal) { return ProjectGoals(goal); }
+        // Vrai si un Brictron a une Task vivante (en cours ou en attente) sur ce Blueprint.
+        internal static bool HasLiveWorker(BuildGoal goal)
+        {
+            var workers = WorkersField.GetValue(goal) as List<Labor>;
+            if (workers == null) return false;
+            foreach (Labor w in workers)
+                if (w != null && !w.IsNullOrReleased() && IsLive(w, goal.gameObject)) return true;
+            return false;
+        }
 
         // Force le constructeur statique (config) depuis une autre classe de hooks appelée avant Hooks.
         internal static void EnsureLoaded() { }
@@ -707,6 +746,7 @@ namespace CastleStory.BuildGoalFix
                 { "FilterIsMatchFor", true }, { "GuardPrepare", true }, { "ProjectLimit", true }, { "ClampPickup", true },
                 { "Verbose", false }, { "LogCapacity", true }, { "LogOrders", true }, { "PickupFilter", true }, { "LogAll", true },
                 { "StorageReserve", true }, { "BuildReach", true }, { "BuildPlan", true },
+                { "FastThinking", true }, { "CompleteFirst", true },
             };
             try
             {
