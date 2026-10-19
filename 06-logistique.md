@@ -279,3 +279,13 @@ Portes (`Door`, `HeavyDoor`) : comptées passables. Les autres objets (palettes,
 Journal (BuildGoalFix.log) : `[Ordre #id] accès : N Blueprint(s), x inaccessible(s), y reporté(s) [X coupe Y…] ; cases, ms` à chaque changement ; sur échec d'une Task de construction : `accès oui/NON (reporté : coupe …)`.
 Vérification hors jeu : `patch/verify/grid_sim.py` (portage Python de la grille) : couloir coupé par un bloc de 2 de haut → reporté ; un bloc seul ne coupe pas (on grimpe 1 voxel) ; pièce : la porte qui ferme est reportée, l'intérieur passe en tête ; mur ouvert : aucune coupure. DLL : métadonnées identiques, 26/26 appels de hooks résolus.
 Limites [D] : obstacles mobiles et Brictron ignorés ; pentes simplifiées ; deux poses simultanées qui ne coupent qu'ensemble passent (rattrapé au calcul suivant).
+
+### 10.3 Test v1.6 (2026-10-19, 13:20 → 13:41) et v1.6.1
+
+Copies : `patch/verify/*-2026-10-19-v1.6.log`. Constat utilisateur : construction dans l'ordre et terminée ; deux Brictron restés bloqués à l'étage (pas d'escalier) ; gel d'environ 0,5 s régulier.
+
+| Point | Mesure | Cause / correctif v1.6.1 |
+|---|---|---|
+| `PathExecutionFailed` BuildProject | 9 échecs / 369 m (v1.5 : 11 / 745 m) ; 6 sur des créneaux et poutres en haut de mur, modèle « accès oui » | Modèle trop permissif en hauteur [D] : les cases posées comptent comme blocs pleins sur lesquels on marche ; les créneaux (`Stone_Merlon*`) et poutres ne le sont probablement pas. Non corrigé (données de forme à lire) |
+| Brictron enfermés | Kadir : 3 `WalkToward` en échec à 494,109,706 | La non-coupure protégeait les Blueprints, pas les Brictron. v1.6.1 : X refusé s'il enfermerait un Brictron aujourd'hui relié au bord, ou si aucune de ses propres cases d'accès ne reste reliée (le poseur) ; un Brictron inactif menacé reçoit `Order.Move.WalkToward` vers la case de bord la plus proche (au plus toutes les 8 s ; journal `Évacuation :`) |
+| Gel | Calcul de 647 ms sur un ordre de 23 Blueprints (6 552 cases, 3 reportés), refait à chaque pose et toutes les 3 s | Un parcours par Blueprint testé, chaque case relisant le voxel. v1.6.1 : cases debout précalculées une fois ; un test ne réévalue que les cases touchées (case posée, dessous, dessus) ; parcours sur index ; liste des Blueprints relue au plus une fois par frame ; calcul ≥ 30 ms toujours journalisé |

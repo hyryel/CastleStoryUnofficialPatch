@@ -24,14 +24,19 @@ namespace CastleStory.BuildGoalFix
     //   (a) accès : un Blueprint est « accessible » si une de ses cases d'accès est dans R(actuel). Informatif
     //       seulement (journal) : le modèle ignore les échelles, et vanilla vérifie déjà l'accès réel au choix
     //       (BuildGoalFinder) ; refuser sur le modèle pourrait bloquer un Blueprint atteignable.
-    //   (b) non-coupure : un Blueprint n'est pas attribué si le construire retire de R toutes les cases d'accès
-    //       d'un autre Blueprint du projet accessible aujourd'hui.
+    //   (b) non-coupure : un Blueprint X n'est pas attribué si le construire retire de R
+    //       - toutes les cases d'accès d'un autre Blueprint du projet accessible aujourd'hui ;
+    //       - la case d'un Brictron qui est aujourd'hui dans R (v1.6.1 : Brictron enfermés à l'étage) ;
+    //       - toutes ses propres cases d'accès (celui qui pose resterait enfermé).
+    //   Un Brictron inactif qui serait enfermé reçoit un ordre de redescendre vers le bord (v1.6.1).
     //   Sécurités : si aucun Blueprint n'est accessible (modèle en défaut) ou si tous les accessibles coupent
-    //   quelqu'un (blocage mutuel), le contrôle est levé pour le projet jusqu'au prochain calcul.
+    //   quelque chose (blocage mutuel), le contrôle est levé pour le projet jusqu'au prochain calcul.
     // Étape 2 (plan, clé BuildPlan) : bonus de priorité « de l'intérieur vers l'extérieur » : profondeur des
     //   cases d'accès (distance au bord) dans l'état final (tous les Blueprints construits) ; un Blueprint
     //   inaccessible dans l'état final (pièce fermée) passe en tête. Bonus ajouté à BuildGoal.PriorityFor.
     // Calcul par projet, mis en cache : refait si la liste des Blueprints change ou au bout de Refresh secondes.
+    // v1.6.1 : carte des cases debout précalculée une fois par calcul ; un test de coupure ne réévalue que les
+    //          cases touchées par la pose (parcours sur index) : 647 ms → quelques ms (gel régulier du jeu).
     public static class BuildOrder
     {
         public static bool ReachEnabled;
@@ -41,6 +46,7 @@ namespace CastleStory.BuildGoalFix
         private const int Margin = 6, MarginDown = 3, MarginUp = 4;
         private const int MaxCells = 600000;
         private const int BonusPerStep = 3, MaxDepthSteps = 20;
+        private const float EvacuateEvery = 8f;
 
         static BuildOrder() { Hooks.EnsureLoaded(); }
 
@@ -59,13 +65,18 @@ namespace CastleStory.BuildGoalFix
         {
             public string Signature;
             public float Time;
+            public int Frame;
             public bool Disabled;
             public string Note = "";
+            public long Ms;
             public Dictionary<BuildGoal, GoalInfo> Infos = new Dictionary<BuildGoal, GoalInfo>();
             public string LoggedState;
         }
 
         private static readonly Dictionary<BuildGoalProvider, Plan> Plans = new Dictionary<BuildGoalProvider, Plan>();
+        private static readonly Dictionary<Labor, float> LastEvacuation = new Dictionary<Labor, float>();
+        private static Labor[] _labors = new Labor[0];
+        private static float _laborsTime = -100f;
 
         // --- API pour les hooks ---
 
@@ -114,20 +125,26 @@ namespace CastleStory.BuildGoalFix
         private static Plan GetPlan(BuildGoal goal)
         {
             BuildGoalProvider provider = goal.Provider;
+            Plan plan;
+            bool known = Plans.TryGetValue(provider, out plan);
+            // Même frame : pas de relecture de la liste des Blueprints (IsMatchFor/PriorityFor appelés pour chaque goal).
+            if (known && plan.Frame == UnityEngine.Time.frameCount) return plan;
             List<BuildGoal> goals = Hooks.ProjectGoalsOf(goal);
             string sig = Signature(goals);
-            Plan plan;
-            if (Plans.TryGetValue(provider, out plan) && plan.Signature == sig && UnityEngine.Time.time - plan.Time < Refresh)
+            if (known && plan.Signature == sig && UnityEngine.Time.time - plan.Time < Refresh)
+            {
+                plan.Frame = UnityEngine.Time.frameCount;
                 return plan;
+            }
             if (Plans.Count > 32) Plans.Clear();
-            plan = Compute(goals);
-            plan.Signature = sig;
-            plan.Time = UnityEngine.Time.time;
-            Plan previous;
-            if (Plans.TryGetValue(provider, out previous)) plan.LoggedState = previous.LoggedState;
-            Plans[provider] = plan;
-            LogPlan(goal, plan);
-            return plan;
+            Plan fresh = Compute(goals);
+            fresh.Signature = sig;
+            fresh.Time = UnityEngine.Time.time;
+            fresh.Frame = UnityEngine.Time.frameCount;
+            if (known) fresh.LoggedState = plan.LoggedState;
+            Plans[provider] = fresh;
+            LogPlan(goal, fresh);
+            return fresh;
         }
 
         private static string Signature(List<BuildGoal> goals)
@@ -146,8 +163,7 @@ namespace CastleStory.BuildGoalFix
             {
                 if (g == null || g.IsNullOrReleased() || g.IsAnti || g.volume == null) continue;
                 var info = new GoalInfo { Goal = g };
-                bool door = IsPassable(g);
-                if (!door) foreach (XYZ c in g.volume.blueprint) info.Cells.Add(c);
+                if (!IsPassable(g)) foreach (XYZ c in g.volume.blueprint) info.Cells.Add(c);
                 foreach (XYZ a in g.volume.access) info.Access.Add(a);
                 infos.Add(info);
                 plan.Infos[g] = info;
@@ -158,7 +174,7 @@ namespace CastleStory.BuildGoalFix
             if (grid == null) { plan.Disabled = true; plan.Note = "zone trop grande, contrôle levé"; return plan; }
 
             // État actuel.
-            bool[] r0 = grid.Reach(null);
+            int[] r0 = grid.Flood(null);
             int reachable = 0;
             foreach (GoalInfo i in infos) { i.Reach = grid.AnyIn(r0, i.Access); if (i.Reach) reachable++; }
             if (reachable == 0)
@@ -168,6 +184,15 @@ namespace CastleStory.BuildGoalFix
             }
             else if (ReachEnabled)
             {
+                // Brictron présents dans la zone et reliés au bord : à ne pas enfermer.
+                var people = new List<KeyValuePair<Labor, int>>();
+                foreach (Labor l in Labors())
+                {
+                    if (l == null || l.IsNullOrReleased() || !l.enabled) continue;
+                    int cell = grid.StandCellOf(l.transform.position);
+                    if (cell >= 0 && r0[cell] >= 0) people.Add(new KeyValuePair<Labor, int>(l, cell));
+                }
+                var trapped = new HashSet<Labor>();
                 // (b) Coupure : un parcours par Blueprint accessible qui occupe une case debout de R0 (ou sa tête).
                 int allowed = 0;
                 foreach (GoalInfo x in infos)
@@ -175,13 +200,22 @@ namespace CastleStory.BuildGoalFix
                     if (!x.Reach) continue;
                     if (grid.TouchesReach(r0, x.Cells))
                     {
-                        bool[] rx = grid.Reach(x.Cells);
-                        foreach (GoalInfo g in infos)
+                        int[] rx = grid.Flood(x.Cells);
+                        if (!grid.AnyIn(rx, x.Access)) { x.Allowed = false; x.CutVictim = "celui qui le pose"; }
+                        if (x.Allowed)
+                            foreach (GoalInfo g in infos)
+                            {
+                                if (g == x || !g.Reach || grid.AnyIn(rx, g.Access)) continue;
+                                x.Allowed = false;
+                                x.CutVictim = g.Goal.name;
+                                break;
+                            }
+                        foreach (var kv in people)
                         {
-                            if (g == x || !g.Reach || grid.AnyIn(rx, g.Access)) continue;
-                            x.Allowed = false;
-                            x.CutVictim = g.Goal.name;
-                            break;
+                            // Brictron debout sur la case posée (ou dessous) : simple passage, pas un enfermement.
+                            if (rx[kv.Value] >= 0 || grid.Covers(x.Cells, kv.Value)) continue;
+                            trapped.Add(kv.Key);
+                            if (x.Allowed) { x.Allowed = false; x.CutVictim = "Brictron " + kv.Key.name; }
                         }
                     }
                     if (x.Allowed) allowed++;
@@ -189,8 +223,9 @@ namespace CastleStory.BuildGoalFix
                 if (allowed == 0)
                 {
                     foreach (GoalInfo x in infos) x.Allowed = true;
-                    plan.Note = "tous les Blueprints accessibles en coupent un autre, coupure ignorée";
+                    plan.Note = "tous les Blueprints accessibles coupent quelque chose, coupure ignorée";
                 }
+                else Evacuate(grid, r0, trapped, people);
             }
 
             // Étape 2 : profondeur dans l'état final.
@@ -198,7 +233,7 @@ namespace CastleStory.BuildGoalFix
             {
                 var all = new List<XYZ>();
                 foreach (GoalInfo i in infos) all.AddRange(i.Cells);
-                int[] depth = grid.Depth(all);
+                int[] depth = grid.Flood(all);
                 int max = 0;
                 var raw = new Dictionary<GoalInfo, int>();
                 foreach (GoalInfo i in infos)
@@ -213,8 +248,54 @@ namespace CastleStory.BuildGoalFix
                     i.Bonus = Math.Min(d, MaxDepthSteps) * BonusPerStep;
                 }
             }
-            plan.Note += (plan.Note.Length > 0 ? " ; " : "") + string.Format("{0} cases, {1} ms", grid.Count, sw.ElapsedMilliseconds);
+            plan.Ms = sw.ElapsedMilliseconds;
+            plan.Note += (plan.Note.Length > 0 ? " ; " : "") + string.Format("{0} cases, {1} ms", grid.Count, plan.Ms);
             return plan;
+        }
+
+        // Brictron de la zone (rafraîchi toutes les 2 s : FindObjectsOfType est coûteux).
+        private static Labor[] Labors()
+        {
+            if (UnityEngine.Time.time - _laborsTime > 2f)
+            {
+                _labors = UnityEngine.Object.FindObjectsOfType<Labor>();
+                _laborsTime = UnityEngine.Time.time;
+            }
+            return _labors;
+        }
+
+        // Brictron inactif qui serait enfermé par une pose à venir : ordre de marcher vers le bord de la zone
+        // (case reliée la plus proche). Un Brictron occupé finira sa tâche ; il sera traité au calcul suivant.
+        private static void Evacuate(Grid grid, int[] r0, HashSet<Labor> trapped, List<KeyValuePair<Labor, int>> people)
+        {
+            if (trapped.Count == 0) return;
+            float now = UnityEngine.Time.time;
+            foreach (var kv in people)
+            {
+                Labor l = kv.Key;
+                if (!trapped.Contains(l) || !IsIdle(l)) continue;
+                float last;
+                if (LastEvacuation.TryGetValue(l, out last) && now - last < EvacuateEvery) continue;
+                int target = grid.NearestBorder(r0, kv.Value);
+                if (target < 0) continue;
+                XYZ dest = grid.Position(target);
+                try
+                {
+                    Order.Move.WalkToward.Send(l, Location.Of(dest), Labor.DecisionSource.Project);
+                    LastEvacuation[l] = now;
+                    if (LastEvacuation.Count > 256) LastEvacuation.Clear();
+                    Hooks.LogLine(string.Format("Évacuation : {0} serait enfermé, envoyé vers {1},{2},{3}", l.name, dest.x, dest.y, dest.z));
+                }
+                catch (Exception e) { Hooks.LogError(e); }
+            }
+        }
+
+        private static bool IsIdle(Labor l)
+        {
+            if (l.PendingTask != null) return false;
+            if (!(l.Project == null || l.Project is IdleProject)) return false;
+            Brix.Game.AI.Task t = l.CurrentTask;
+            return t == null || t.Giver == null;
         }
 
         // Porte (Door, HeavyDoor) : passable une fois construite, ne compte pas comme obstacle.
@@ -236,7 +317,8 @@ namespace CastleStory.BuildGoalFix
             }
             string state = string.Format("{0} Blueprint(s), {1} inaccessible(s), {2} reporté(s){3}", plan.Infos.Count, unreachable, deferred,
                 plan.Disabled ? ", contrôle levé" : "");
-            if (state == plan.LoggedState) return;
+            // Calcul lent : toujours journalisé (surveillance des gels).
+            if (state == plan.LoggedState && plan.Ms < 30) return;
             plan.LoggedState = state;
             Hooks.LogLine(string.Format("{0} accès : {1}{2} ; {3}", Hooks.OrderTagOf(goal), state,
                 names.Count > 0 ? " [" + string.Join(", ", names.ToArray()) + "]" : "", plan.Note));
@@ -247,10 +329,10 @@ namespace CastleStory.BuildGoalFix
         private sealed class Grid
         {
             private int x0, y0, z0, nx, ny, nz;
-            private byte[] cell;   // bits : 1 plein/non vide, 2 plein entier, 4 blocage nature, 8 volume walkable
+            private byte[] cell;    // bits : 1 non vide, 2 plein entier, 4 blocage nature, 8 volume walkable
+            private bool[] stand0;  // cases debout dans l'état actuel
+            private int strideX;    // pas d'index : y → 1, z → ny, x → nz*ny
             public int Count { get { return cell.Length; } }
-
-            private static readonly XYZ[] Dirs = { new XYZ(1, 0, 0), new XYZ(-1, 0, 0), new XYZ(0, 0, 1), new XYZ(0, 0, -1) };
 
             public static Grid Build(List<GoalInfo> infos)
             {
@@ -268,6 +350,7 @@ namespace CastleStory.BuildGoalFix
                 };
                 long n = (long)g.nx * g.ny * g.nz;
                 if (n > MaxCells) return null;
+                g.strideX = g.nz * g.ny;
                 g.cell = new byte[n];
                 TestPathfinding tp = TestPathfinding.Instance;
                 for (int x = 0; x < g.nx; x++)
@@ -281,6 +364,8 @@ namespace CastleStory.BuildGoalFix
                             if (tp != null && tp.IsAWalkableObstacle(p)) b |= 8;
                             g.cell[g.Index(x, y, z)] = b;
                         }
+                g.stand0 = new bool[n];
+                for (int i = 0; i < n; i++) g.stand0[i] = g.StandAt(i, null);
                 return g;
             }
 
@@ -292,106 +377,112 @@ namespace CastleStory.BuildGoalFix
 
             private int Index(int x, int y, int z) { return (x * nz + z) * ny + y; }
 
-            private bool Local(XYZ p, out int x, out int y, out int z)
-            {
-                x = p.x - x0; y = p.y - y0; z = p.z - z0;
-                return x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz;
-            }
-
             private int IndexOf(XYZ p)
             {
-                int x, y, z;
-                return Local(p, out x, out y, out z) ? Index(x, y, z) : -1;
+                int x = p.x - x0, y = p.y - y0, z = p.z - z0;
+                return x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz ? Index(x, y, z) : -1;
             }
 
-            // Hors grille : lecture directe du monde.
-            private byte Raw(XYZ p, HashSet<int> overlay, out bool added)
+            public XYZ Position(int i)
             {
-                int i = IndexOf(p);
-                added = i >= 0 && overlay != null && overlay.Contains(i);
-                if (i >= 0) return cell[i];
-                byte b = 0;
-                if (Voxel.IsNonEmpty(p)) { b |= 1; if (Voxel.IsFull(p)) b |= 2; }
-                return b;
+                int y = i % ny, z = (i / ny) % nz, x = i / strideX;
+                return new XYZ(x0 + x, y0 + y, z0 + z);
             }
 
-            private bool Stand(XYZ p, HashSet<int> overlay)
+            // Case debout d'indice i, avec des cases rendues pleines (overlay). Au-dessus/au-dessous de la grille :
+            // tête libre, sol absent (marges de 3 dessous et 4 dessus).
+            private bool StandAt(int i, HashSet<int> overlay)
             {
-                bool addedP, addedUp, addedDown;
-                byte bp = Raw(p, overlay, out addedP);
-                if (addedP || (bp & 4) != 0) return false;
-                byte bu = Raw(p + XYZ.up, overlay, out addedUp);
-                if (addedUp || (bu & 1) != 0) return false;
+                if (overlay != null && overlay.Contains(i)) return false;
+                byte bp = cell[i];
+                if ((bp & 4) != 0) return false;
+                int y = i % ny;
+                if (y + 1 < ny)
+                {
+                    if ((cell[i + 1] & 1) != 0 || (overlay != null && overlay.Contains(i + 1))) return false;
+                }
                 if ((bp & 8) != 0) return true;
                 if ((bp & 1) != 0) return (bp & 2) == 0;          // pente
-                byte bd = Raw(p - XYZ.up, overlay, out addedDown);
-                return addedDown || (bd & 2) != 0;
+                if (y == 0) return false;
+                return (cell[i - 1] & 2) != 0 || (overlay != null && overlay.Contains(i - 1));
             }
 
-            private HashSet<int> Overlay(List<XYZ> cells)
+            // Cases dont l'état debout change quand `solid` devient plein : la case, celle du dessous (tête), celle du
+            // dessus (nouveau sol). Les autres gardent stand0.
+            private Dictionary<int, bool> Changes(List<XYZ> solid)
             {
-                if (cells == null || cells.Count == 0) return null;
-                var o = new HashSet<int>();
-                foreach (XYZ c in cells) { int i = IndexOf(c); if (i >= 0) o.Add(i); }
-                return o;
+                if (solid == null || solid.Count == 0) return null;
+                var overlay = new HashSet<int>();
+                foreach (XYZ c in solid) { int i = IndexOf(c); if (i >= 0) overlay.Add(i); }
+                var changes = new Dictionary<int, bool>();
+                foreach (int i in overlay)
+                {
+                    int y = i % ny;
+                    changes[i] = false;
+                    if (y > 0) changes[i - 1] = StandAt(i - 1, overlay);
+                    if (y + 1 < ny) changes[i + 1] = StandAt(i + 1, overlay);
+                }
+                return changes;
             }
 
-            // Cases debout reliées au bord horizontal de la grille.
-            public bool[] Reach(List<XYZ> solidCells)
+            private bool S(int i, Dictionary<int, bool> changes)
             {
-                int[] d = Flood(Overlay(solidCells));
-                var r = new bool[d.Length];
-                for (int i = 0; i < d.Length; i++) r[i] = d[i] >= 0;
-                return r;
+                bool v;
+                return changes != null && changes.TryGetValue(i, out v) ? v : stand0[i];
             }
 
-            // Distance (en pas) au bord, -1 si non relié.
-            public int[] Depth(List<XYZ> solidCells) { return Flood(Overlay(solidCells)); }
-
-            private int[] Flood(HashSet<int> overlay)
+            // Distance (en pas) au bord horizontal de la grille par les cases debout ; -1 si non relié.
+            public int[] Flood(List<XYZ> solid)
             {
+                Dictionary<int, bool> ch = Changes(solid);
                 var dist = new int[cell.Length];
                 for (int i = 0; i < dist.Length; i++) dist[i] = -1;
-                var queue = new Queue<XYZ>();
+                var queue = new Queue<int>();
                 for (int x = 0; x < nx; x++)
                     for (int z = 0; z < nz; z++)
                     {
                         if (x != 0 && z != 0 && x != nx - 1 && z != nz - 1) continue;
                         for (int y = 0; y < ny; y++)
                         {
-                            var p = new XYZ(x0 + x, y0 + y, z0 + z);
-                            if (!Stand(p, overlay)) continue;
-                            dist[Index(x, y, z)] = 0;
-                            queue.Enqueue(p);
+                            int i = Index(x, y, z);
+                            if (!S(i, ch)) continue;
+                            dist[i] = 0;
+                            queue.Enqueue(i);
                         }
                     }
                 while (queue.Count > 0)
                 {
-                    XYZ p = queue.Dequeue();
-                    int dp = dist[IndexOf(p)];
-                    foreach (XYZ dir in Dirs)
-                    {
-                        XYZ n = p + dir;
-                        if (Stand(n, overlay)) { Visit(n, dp, dist, queue); continue; }
-                        XYZ lo = n - XYZ.up, hi = n + XYZ.up;
-                        if (Stand(lo, overlay)) Visit(lo, dp, dist, queue);
-                        if (Stand(hi, overlay)) Visit(hi, dp, dist, queue);
-                    }
+                    int i = queue.Dequeue();
+                    int y = i % ny, z = (i / ny) % nz, x = i / strideX;
+                    int d = dist[i] + 1;
+                    Step(i, x + 1 < nx, strideX, y, d, dist, queue, ch);
+                    Step(i, x > 0, -strideX, y, d, dist, queue, ch);
+                    Step(i, z + 1 < nz, ny, y, d, dist, queue, ch);
+                    Step(i, z > 0, -ny, y, d, dist, queue, ch);
                 }
                 return dist;
             }
 
-            private void Visit(XYZ n, int dp, int[] dist, Queue<XYZ> queue)
+            // Voisin horizontal : même hauteur si debout, sinon un voxel plus bas et/ou plus haut.
+            private void Step(int i, bool inside, int offset, int y, int d, int[] dist, Queue<int> queue, Dictionary<int, bool> ch)
             {
-                int i = IndexOf(n);
-                if (i < 0 || dist[i] >= 0) return;
-                dist[i] = dp + 1;
+                if (!inside) return;
+                int n = i + offset;
+                if (S(n, ch)) { Visit(n, d, dist, queue); return; }
+                if (y > 0 && S(n - 1, ch)) Visit(n - 1, d, dist, queue);
+                if (y + 1 < ny && S(n + 1, ch)) Visit(n + 1, d, dist, queue);
+            }
+
+            private static void Visit(int n, int d, int[] dist, Queue<int> queue)
+            {
+                if (dist[n] >= 0) return;
+                dist[n] = d;
                 queue.Enqueue(n);
             }
 
-            public bool AnyIn(bool[] reach, List<XYZ> cells)
+            public bool AnyIn(int[] dist, List<XYZ> cells)
             {
-                foreach (XYZ c in cells) { int i = IndexOf(c); if (i >= 0 && reach[i]) return true; }
+                foreach (XYZ c in cells) { int i = IndexOf(c); if (i >= 0 && dist[i] >= 0) return true; }
                 return false;
             }
 
@@ -406,17 +497,71 @@ namespace CastleStory.BuildGoalFix
                 return best;
             }
 
-            // Vrai si une des cases (ou la case sous elle : la tête d'un Brictron) est une case debout de R.
-            public bool TouchesReach(bool[] reach, List<XYZ> cells)
+            // Vrai si une des cases (ou la case sous elle : la tête d'un Brictron) est une case debout reliée.
+            public bool TouchesReach(int[] dist, List<XYZ> cells)
             {
                 foreach (XYZ c in cells)
                 {
                     int i = IndexOf(c);
-                    if (i >= 0 && reach[i]) return true;
+                    if (i >= 0 && dist[i] >= 0) return true;
                     int j = IndexOf(c - XYZ.up);
-                    if (j >= 0 && reach[j]) return true;
+                    if (j >= 0 && dist[j] >= 0) return true;
                 }
                 return false;
+            }
+
+            // Vrai si la case i (ou celle de sa tête) fait partie des cases posées.
+            public bool Covers(List<XYZ> cells, int i)
+            {
+                foreach (XYZ c in cells)
+                {
+                    int j = IndexOf(c);
+                    if (j == i || j == i + 1) return true;
+                }
+                return false;
+            }
+
+            // Case debout d'un Brictron : sa case, sinon celle du dessous ou du dessus.
+            public int StandCellOf(Vector3 position)
+            {
+                XYZ p = XYZ.FromVector3(position);
+                foreach (XYZ q in new[] { p, p - XYZ.up, p + XYZ.up })
+                {
+                    int i = IndexOf(q);
+                    if (i >= 0 && stand0[i]) return i;
+                }
+                return -1;
+            }
+
+            // Case de bord (distance 0) la plus proche de `from` en suivant les cases debout de l'état actuel.
+            public int NearestBorder(int[] r0, int from)
+            {
+                var seen = new HashSet<int> { from };
+                var queue = new Queue<int>();
+                queue.Enqueue(from);
+                while (queue.Count > 0)
+                {
+                    int i = queue.Dequeue();
+                    if (r0[i] == 0) return i;
+                    int y = i % ny, z = (i / ny) % nz, x = i / strideX;
+                    foreach (int n in Neighbors(i, x, y, z))
+                        if (seen.Add(n)) queue.Enqueue(n);
+                }
+                return -1;
+            }
+
+            private IEnumerable<int> Neighbors(int i, int x, int y, int z)
+            {
+                var offs = new List<int>();
+                if (x + 1 < nx) offs.Add(strideX); if (x > 0) offs.Add(-strideX);
+                if (z + 1 < nz) offs.Add(ny); if (z > 0) offs.Add(-ny);
+                foreach (int o in offs)
+                {
+                    int n = i + o;
+                    if (stand0[n]) { yield return n; continue; }
+                    if (y > 0 && stand0[n - 1]) yield return n - 1;
+                    if (y + 1 < ny && stand0[n + 1]) yield return n + 1;
+                }
             }
         }
     }

@@ -1,7 +1,7 @@
 # Portage fidèle de BuildOrder.Grid (Stand / Flood / TouchesReach / coupure / profondeur) sur un monde synthétique.
 from collections import deque
 M,MD,MU=6,3,4
-def run(world_full, goals):
+def run(world_full, goals, people=()):
     # world_full: set de cases pleines ; goals: dict nom -> (cells, access)
     xs=[p[0] for g in goals.values() for p in g[0]+g[1]]; ys=[p[1] for g in goals.values() for p in g[0]+g[1]]; zs=[p[2] for g in goals.values() for p in g[0]+g[1]]
     x0,y0,z0=min(xs)-M,min(ys)-MD,min(zs)-M; nx,ny,nz=max(xs)-min(xs)+1+2*M,max(ys)-min(ys)+1+MD+MU,max(zs)-min(zs)+1+2*M
@@ -31,12 +31,15 @@ def run(world_full, goals):
     r0=flood(set())
     reach={k:any(a in r0 for a in g[1]) for k,g in goals.items()}
     cut={}
-    for k,(cells,acc) in goals.items():
+    for k,(cells,acc_) in goals.items():
         if not reach[k]: continue
         touches=any(c in r0 or (c[0],c[1]-1,c[2]) in r0 for c in cells)
         if not touches: continue
         rx=flood(set(cells))
         v=[o for o,(oc,oa) in goals.items() if o!=k and reach[o] and not any(a in rx for a in oa)]
+        if not any(a in rx for a in acc_): v.append('poseur')
+        cov=set(cells)|{(c[0],c[1]-1,c[2]) for c in cells}
+        v+=['Brictron@'+str(p) for p in people if p in r0 and p not in rx and p not in cov]
         if v: cut[k]=v
     allc=set(c for g in goals.values() for c in g[0]); dep=flood(allc)
     depth={k:min([dep[a] for a in g[1] if a in dep],default=-1) for k,g in goals.items()}
@@ -77,3 +80,12 @@ print('couloir4  coupe',c,'profondeur',d)
 # 7) Même chose avec un premier bloc déjà posé à (0,0,0) et A = (0,1,0) au-dessus
 r,c,d=run(w|{(0,0,0)},{'A':([(0,1,0)],[(-1,0,0),(1,0,0)]),'B':([(5,0,0)],[(4,0,0)])})
 print('couloir5  coupe',c)
+
+# 8) Étage sans escalier : plateforme 3x3 à y=2 (dessus y=3) atteinte par une marche (bloc (2,0,0) puis (2,1,0) ... ).
+#    Marches : (3,0,0) hauteur 1 → (2,1,0)... ; Brictron à l'étage (1,3,1). X = Blueprint qui recouvre la marche haute.
+plat={(x,y,z) for x in (-1,0,1) for z in (-1,0,1) for y in (0,1,2)}
+steps={(2,0,0),(2,1,0),(3,0,0)}   # escalier de fortune : sol→(3,1,0)→(2,2,0)→plateforme (1,3,0)
+w8=ground|plat|steps
+X8=[(3,1,0),(3,2,0)]              # pose qui coupe la marche
+r,c,d=run(w8,{'X':(X8,[(4,0,0),(3,0,1)]),'Y':([(5,0,5)],[(5,0,4)])},people=[(0,3,0)])
+print('étage     reach',r,'coupe',c)
