@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Installeur autonome du patch non officiel : publié en exécutable unique (win-x64, linux-x64) par package.sh. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>CastleStoryPatch</AssemblyName>
+    <RootNamespace>CastleStoryPatch</RootNamespace>
+    <Nullable>disable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <NoWarn>MSB3277;NU1702</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="CastleStory.BuildGoalFix.Loader"><HintPath>../BuildGoalFix.Loader/bin/Release/net35/CastleStory.BuildGoalFix.Loader.dll</HintPath></Reference>
+    <Reference Include="Mono.Cecil"><HintPath>../BuildGoalFix.Loader/lib/Mono.Cecil.dll</HintPath></Reference>
+    <Reference Include="Mono.Cecil.Rocks"><HintPath>../BuildGoalFix.Loader/lib/Mono.Cecil.Rocks.dll</HintPath></Reference>
+    <!-- DLL des hooks copiée dans Managed à l'installation (compilée avant par build.sh). -->
+    <EmbeddedResource Include="../BuildGoalFix/bin/Release/net35/CastleStory.BuildGoalFix.dll" LogicalName="CastleStory.BuildGoalFix.dll" />
+  </ItemGroup>
+</Project>

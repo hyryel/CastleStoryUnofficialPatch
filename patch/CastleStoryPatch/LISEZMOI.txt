@@ -1,0 +1,23 @@
+CastleStoryPatch — patch non officiel de Castle Story (usage personnel, ne pas redistribuer)
+
+Contenu du patch : correction de la construction (1 bloc = 1 Brictron, ramassage borné),
+sélection des objets à ramasser, réservation de place dans les stockages, ordre de construction
+(pas de bloc qui coupe l'accès d'un autre ni n'enferme un Brictron), délais de réflexion réduits,
+palettes complétées avant d'en entamer une autre, journaux BuildGoalFix.log / Logistique.log.
+
+Installation (jeu fermé)
+  Windows : lancer win-x64\CastleStoryPatch.exe (double-clic). Le jeu est trouvé via Steam.
+  Linux   : chmod +x linux-x64/CastleStoryPatch && ./linux-x64/CastleStoryPatch install
+  Dossier du jeu non trouvé : CastleStoryPatch install "<dossier de Castle Story>"
+
+Autres commandes
+  CastleStoryPatch status    état de l'installation
+  CastleStoryPatch restore   remet la DLL d'origine (Assembly-CSharp-firstpass.dll.orig)
+
+Après une mise à jour du jeu ou une vérification des fichiers par Steam, le patch est retiré :
+relancer l'installation (la nouvelle DLL d'origine est sauvegardée automatiquement).
+
+Réglages : Castle Story_Data/Managed/BuildGoalFix.cfg (créé au premier lancement du jeu),
+une ligne par fonction, true/false. Exemples : FastThinking, CompleteFirst, BuildReach, StorageReserve, LogAll.
+
+Multijoueur : la logique corrigée tourne chez l'hôte ; les autres joueurs n'ont pas besoin du patch.
