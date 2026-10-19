@@ -103,7 +103,9 @@
 | v1.9.1 (installée 2026-10-19 18:35) | « sans support » jamais mémorisé ; Blueprint attribué disparu = posé jusqu'à lecture du bloc (`Pending`, 5 s max). Simulateur : retard de lecture + rangée ajoutée en cours, 2 scénarios ; batterie inchangée ; C# = Python 50/50. Défaut connu hors périmètre : avec escalier, échecs de trajet groupés et un enfermement sur 1 graine sur 12. Détail : 06 §13.5 |
 | Test v1.9.1 (2026-10-19, 18:56) | « sans support » transitoire corrigé ; rangées 1-3 montées sans échec ; 5 Brictron coincés sur le haut du mur (marche provisoire), évacuations en échec. Piste non retenue pour l'instant : saut d'évacuation (`TurnAndJumpToward`). Détail : 06 §14 |
 | v1.9.2 (installée 2026-10-19) | Brictron inactifs (`Chilling`) traversent les alliés : hook T sur `Builder.CanPassThrough`, clé `PassThroughIdle`. 30/30 appels résolus. Détail : 06 §14 |
-| Prochaine action | Test v1.9.2 : blocages entre Brictron oisifs disparus ? empilements gênants ? Tour : de préférence avec escalier dès le départ (fin de tour attendue). Brictron coincés sur le mur : décider (interdire la marche provisoire ou saut d'évacuation). Puis commit 1.9 → 1.9.2 et `package.sh`. Toujours à faire : palettes entamées (B + C), deux chantiers simultanés |
+| Test v1.9.2 (2026-10-19, 19:31) | Tour finie à 19:40 après escalier ; échafaudage en bois ignoré 2 min (rampe vue pleine + `Sticky` non vidé à la pose). Compteur Goals figé (vanilla). Détail : 06 §15 |
+| v1.9.3 (installée 2026-10-19) | Rampe = pente, `Sticky` vidé à la pose lue et toutes les 10 s, Brictron poussé sur un bloc, évacuation à chaque frame ; `patch/lua.sh` : compteur Goals rafraîchi (GameMenu.lua, .orig). Simulateur 20 scénarios OK, C# = Python 63/63. Détail : 06 §15 |
+| Prochaine action | Test v1.9.3 (échafaudage, évacuations, compteur Goals). Tâche « Transférer » option 2 (bouton de roue palette source → destination, commande détournée `CmdStockpileAcceptOnly`) en cours. Puis `package.sh` (intégrer lua.sh à l'installeur). Toujours à faire : palettes entamées (B + C), deux chantiers simultanés |
 
 ## Notes pour plus tard
 

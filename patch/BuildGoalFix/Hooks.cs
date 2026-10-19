@@ -45,6 +45,8 @@ namespace CastleStory.BuildGoalFix
     //        sans escalier signalés et jamais attribués, garde exacte à l'attribution ; calcul sans gel (voir BuildOrder.cs).
     // v1.9.2 : un Brictron inactif (Activity.Chilling) traverse les Brictron alliés comme un Brictron au travail
     //          (clé PassThroughIdle, hook T sur Builder.CanPassThrough).
+    // v1.10 : action joueur « Transférer » d'une palette vers une autre (Transfer.cs, clé Transfer, hooks U à Y) ;
+    //         G : un Brictron en transfert garde sa source (autre objet libre de la même palette, jamais ailleurs).
     // Appelé depuis l'IL de Assembly-CSharp-firstpass, réécrit sur disque par BuildGoalFix.Patcher (install.sh).
     public static class Hooks
     {
@@ -80,6 +82,8 @@ namespace CastleStory.BuildGoalFix
         private static readonly bool CompleteFirst;
         // v1.9.2 : Brictron inactifs traversent les alliés (Builder.CanPassThrough).
         private static readonly bool PassThroughIdle;
+        // v1.10 : transfert palette → palette (Transfer.cs).
+        private static readonly bool TransferEnabled;
 
         private static readonly FieldInfo WorkersField =
             typeof(Goal).GetField("workers", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -104,14 +108,16 @@ namespace CastleStory.BuildGoalFix
             FastThinking = cfg["FastThinking"];
             CompleteFirst = cfg["CompleteFirst"];
             PassThroughIdle = cfg["PassThroughIdle"];
+            TransferEnabled = cfg["Transfer"];
+            Transfer.Enabled = TransferEnabled;
             Storage.CompleteFirst = CompleteFirst;
             if (FastThinking) SetTickOffset(1);
             Journal.Enabled = LogAll;
             Storage.Enabled = StorageReserve;
             BuildOrder.ReachEnabled = BuildReach;
             BuildOrder.PlanEnabled = BuildPlan;
-            Log(string.Format("Hooks v1.9.2 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8} StorageReserve={9} BuildReach={10} BuildPlan={11} FastThinking={12} CompleteFirst={13} PassThroughIdle={14}",
-                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll, StorageReserve, BuildReach, BuildPlan, FastThinking, CompleteFirst, PassThroughIdle));
+            Log(string.Format("Hooks v1.10 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8} StorageReserve={9} BuildReach={10} BuildPlan={11} FastThinking={12} CompleteFirst={13} PassThroughIdle={14} Transfer={15}",
+                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll, StorageReserve, BuildReach, BuildPlan, FastThinking, CompleteFirst, PassThroughIdle, TransferEnabled));
         }
 
         // --- v1.7 : délais de réflexion (ticks de 20 ms) ; appelés depuis l'IL à la place des constantes vanilla ---
@@ -363,7 +369,12 @@ namespace CastleStory.BuildGoalFix
                     // être le sac du Brictron qui vient de ramasser l'objet (v1.3.3 : ObjectIsInSomeoneElseBag).
                     Ressource res = Apparence.PrincipaleOf(go);
                     GameObject other = null;
-                    if (res != null)
+                    // v1.10 : transfert ordonné par le joueur : la source est imposée, autre objet libre de la même palette.
+                    if (Transfer.IsPicking(labor))
+                    {
+                        if (res != null && !inBag && parent != null && !parent.IsNullOrReleased()) other = FirstFreeSibling(go, parent, res, labor);
+                    }
+                    else if (res != null)
                     {
                         IGameComponent found = k.ClosestObjectToPickup(labor, res, labor.faction);
                         if (found != null && !found.IsNullOrReleased())
@@ -412,6 +423,14 @@ namespace CastleStory.BuildGoalFix
                 return ordered;
             }
             catch (Exception e) { LogError(e); return items; }
+        }
+
+        // v1.10 (Transfer) : objet non réservé, ou réservé par self via G.
+        internal static bool IsFreeFor(GameObject go, Labor self)
+        {
+            if (go == null || Knowledge.Instance == null || !Knowledge.Instance.IsReserved(go)) return true;
+            Labor owner;
+            return self != null && ReservedBy.TryGetValue(go, out owner) && owner == self;
         }
 
         // Premier objet du conteneur, autre que `except`, de même ressource principale, non réservé
@@ -764,7 +783,7 @@ namespace CastleStory.BuildGoalFix
                 { "FilterIsMatchFor", true }, { "GuardPrepare", true }, { "ProjectLimit", true }, { "ClampPickup", true },
                 { "Verbose", false }, { "LogCapacity", true }, { "LogOrders", true }, { "PickupFilter", true }, { "LogAll", true },
                 { "StorageReserve", true }, { "BuildReach", true }, { "BuildPlan", true },
-                { "FastThinking", true }, { "CompleteFirst", true }, { "PassThroughIdle", true },
+                { "FastThinking", true }, { "CompleteFirst", true }, { "PassThroughIdle", true }, { "Transfer", true },
             };
             try
             {

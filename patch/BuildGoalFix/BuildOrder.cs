@@ -39,6 +39,16 @@ namespace CastleStory.BuildGoalFix
     //          - « sans support » recalculé à chaque calcul, jamais retenu (Sticky = « inaccessible » seulement) ;
     //          - Blueprint attribué disparu = posé : ses cases comptent pleines (Pending) jusqu'à ce que la grille
     //            les voie (ou PendingSeconds).
+    // v1.9.3 : échec en jeu (journal buildgoalfix-2026-10-19-v1.9.2.log, 19:35-19:39) : échafaudage en bois ajouté
+    //          contre une tour sans escalier, posé, mais les briques de la 4e rangée restent « inaccessibles » 2 min.
+    //          Causes : rampe prévue vue pleine (dessus à 2 voxels du sol) et exclusion retenue (Sticky) jusqu'au
+    //          prochain ajout. Correctif (scénarios reel_v192_* et echafaudage_autre_ordre du simulateur) :
+    //          - Wood_Ramp_* = pente pour le plan (comme une marche d'escalier) ;
+    //          - Blueprint disparu (posé ou annulé) surveillé (Watch) : dès que ses cases sont lisibles (ou après
+    //            PendingSeconds), cases relues et exclusions « inaccessible » réévaluées ; exclusions retenues au plus
+    //            StickySeconds (monde changé hors projet) ;
+    //          - Brictron poussé sur un bloc posé au-dessus de lui compté enfermé si ce dessus n'est pas relié ;
+    //            Brictron menacé par une pose en cours évacué à chaque frame (plus seulement sur un refus).
     public static class BuildOrder
     {
         public static bool ReachEnabled;
@@ -54,6 +64,7 @@ namespace CastleStory.BuildGoalFix
         private const float ValveSeconds = 10f;
         private const float EvacuateEvery = 8f;
         private const float PendingSeconds = 5f;       // v1.9.1 : pose comptée pleine au plus 5 s avant d'être lue
+        private const float StickySeconds = 10f;       // v1.9.3 : exclusions « inaccessible » retenues au plus 10 s
 
         static BuildOrder() { Hooks.EnsureLoaded(); }
 
@@ -101,6 +112,9 @@ namespace CastleStory.BuildGoalFix
             public readonly Dictionary<BuildGoal, Cluster> Where = new Dictionary<BuildGoal, Cluster>();
             public readonly Dictionary<int, string> Sticky = new Dictionary<int, string>();   // exclusions « inaccessible » retenues
             public readonly List<PendingPose> Pending = new List<PendingPose>();               // v1.9.1 : posés pas encore lus
+            public readonly List<PendingPose> Watch = new List<PendingPose>();                 // v1.9.3 : disparus (posés ou annulés)
+            public float StickyTime;                                                           // v1.9.3 : dernier vidage de Sticky
+            public bool Reeval;                                                                // v1.9.3 : recalcul complet demandé
             public readonly HashSet<int> Known = new HashSet<int>();
             public readonly List<BuildGoal> Previous = new List<BuildGoal>();
             public long Signature = long.MinValue;
@@ -264,6 +278,7 @@ namespace CastleStory.BuildGoalFix
                 NewBudgetFrame();
                 long sig = Collect(provider, goal);
                 float now = UnityEngine.Time.time;
+                if (newFrame) CheckWatch(plan, now);
                 if (sig != plan.Signature || plan.Dirty || now - plan.Time >= Refresh)
                 {
                     plan.Dirty = false;
@@ -306,6 +321,31 @@ namespace CastleStory.BuildGoalFix
                 foreach (Cluster cl in plan.Clusters) cl.TooLarge = true;
             }
             return plan;
+        }
+
+        // v1.9.3 : un Blueprint disparu devient lisible dans les voxels (posé : cases relues) ou ne l'est toujours pas
+        // après PendingSeconds (annulé), ou les exclusions sont retenues depuis StickySeconds : le monde a changé
+        // (échafaudage posé…) → exclusions « inaccessible » réévaluées par un calcul complet.
+        private static void CheckWatch(Plan plan, float now)
+        {
+            bool changed = false;
+            for (int w = plan.Watch.Count - 1; w >= 0; w--)
+            {
+                PendingPose e = plan.Watch[w];
+                bool built = BuiltInWorld(e.S);
+                if (!built && now - e.Time <= PendingSeconds && now >= e.Time) continue;
+                if (built)
+                    foreach (Cluster cl in plan.Clusters)
+                        if (cl.Ready && !cl.TooLarge) RereadAround(cl.Core.Grid, e.S);
+                plan.Watch.RemoveAt(w);
+                changed = true;
+            }
+            if (plan.Sticky.Count > 0 && (now - plan.StickyTime >= StickySeconds || now < plan.StickyTime)) changed = true;
+            if (!changed || plan.Sticky.Count == 0) return;
+            plan.Sticky.Clear();
+            plan.StickyTime = now;
+            plan.Reeval = true;
+            plan.Dirty = true;
         }
 
         // Blueprints commités du projet (constructibles et futurs) dans Scratch ; signature (liste + attribués).
@@ -370,6 +410,11 @@ namespace CastleStory.BuildGoalFix
                 if (old == null || (!old.IsNullOrReleased() && Scratch.Contains(old))) continue;
                 Cluster was;
                 Shape s;
+                if (Shapes.TryGetValue(old, out s))
+                {
+                    if (plan.Watch.Count >= 64) plan.Watch.RemoveAt(0);
+                    plan.Watch.Add(new PendingPose { S = s, Time = now });
+                }
                 if (plan.Where.TryGetValue(old, out was) && was.Ready && Shapes.TryGetValue(old, out s))
                 {
                     RereadAround(was.Core.Grid, s);
@@ -387,9 +432,12 @@ namespace CastleStory.BuildGoalFix
             bool grown = false;
             for (int i = 0; i < n; i++)
                 if (!plan.Known.Contains(Scratch[i].GetInstanceID())) { grown = true; break; }
+            bool reeval = plan.Reeval;
+            plan.Reeval = false;
             if (grown)
             {
                 plan.Sticky.Clear();                 // nouveau Blueprint (escalier ajouté ?) : exclusions réévaluées
+                plan.StickyTime = now;
                 if (plan.Known.Count > 8192) plan.Known.Clear();
                 for (int i = 0; i < n; i++) plan.Known.Add(Scratch[i].GetInstanceID());
             }
@@ -428,7 +476,7 @@ namespace CastleStory.BuildGoalFix
                     for (int i = _head[r]; i >= 0 && all; i = _next[i]) if (!c.Index.ContainsKey(Scratch[i])) all = false;
                     if (all) { cl = c; break; }
                 }
-                if (cl != null && now - cl.Time < Refresh && !grown)
+                if (cl != null && now - cl.Time < Refresh && !grown && !reeval)
                 {
                     if (csig == cl.Signature) reuse = true;
                     else if (TryFast(cl, r)) { reuse = true; cl.Fast++; }
@@ -582,11 +630,13 @@ namespace CastleStory.BuildGoalFix
 
         // Nature d'une case posée vue par le plan : porte passable ; case d'escalier sans appui mural = pente ;
         // créneaux, poutres, colonnes… = pleins mais leur dessus n'est pas compté comme sol (forme incertaine).
+        // v1.9.3 : rampe (Wood_Ramp_*) = pente (même règle : patch/verify/buildsim/world.py kind_of).
         private static byte KindOf(string key, bool notWallSupport)
         {
             if (key == null) return PlanGrid.OFull;
             if (key.IndexOf("Door", StringComparison.OrdinalIgnoreCase) >= 0) return PlanGrid.OPass;
             if (notWallSupport && key.IndexOf("Stair", StringComparison.OrdinalIgnoreCase) >= 0) return PlanGrid.OSlope;
+            if (key.IndexOf("Ramp", StringComparison.OrdinalIgnoreCase) >= 0) return PlanGrid.OSlope;
             if (key.IndexOf("Merlon", StringComparison.OrdinalIgnoreCase) >= 0 || key.IndexOf("Beam", StringComparison.OrdinalIgnoreCase) >= 0
                 || key.IndexOf("Brace", StringComparison.OrdinalIgnoreCase) >= 0 || key.IndexOf("Column", StringComparison.OrdinalIgnoreCase) >= 0
                 || key.IndexOf("Parapet", StringComparison.OrdinalIgnoreCase) >= 0 || key.IndexOf("Arch", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -758,6 +808,10 @@ namespace CastleStory.BuildGoalFix
                 int cell = StandCellOf(core.Grid, l.transform.position);
                 if (cell >= 0) core.People.Add(cell);
             }
+            // v1.9.3 : Brictron dans une poche que les poses en cours vont fermer : évacué sans attendre un refus.
+            if (core.Disabled) return;
+            core.MarkThreatened();
+            if (core.Threatened.Count > 0) Evacuate(cl);
         }
 
         // Case debout d'un Brictron : sa case, sinon celle du dessous ou du dessus.

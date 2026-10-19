@@ -26,11 +26,15 @@ def rot(k, p):
     return (-z, y, x)
 
 
-def kind_of(shape, local, nw):
-    """Nature de la case posée, vue par le plan (règle portée en C# : CellKind)."""
+def kind_of(shape, local, nw, ramp=True):
+    """Nature de la case posée, vue par le plan (règle portée en C# : BuildOrder.KindOf).
+    v1.9.3 : rampe (Wood_Ramp_*) = pente (case debout dans la rampe, comme une marche d'escalier) ; avant : pleine
+    (dessus praticable mais 2 voxels au-dessus du sol voisin : jamais atteinte)."""
     if 'Door' in shape:
         return O_PASS
     if 'Stair' in shape and nw:
+        return O_SLOPE
+    if ramp and 'Ramp' in shape:
         return O_SLOPE
     if any(u in shape for u in UNCERTAIN):
         return O_NOFLOOR
@@ -47,10 +51,12 @@ class Goal:
         nwset = {tuple(c) for c in sh['notWallSupport']}
         self.cells = []
         self.kinds = []
+        self.kinds_v192 = []      # vue du plan jusqu'à v1.9.2 (rampe pleine), pour non-régression
         for c in sh['fantome']:
             w = tuple(a + b for a, b in zip(pos, rot(k, c)))
             self.cells.append(w)
             self.kinds.append(kind_of(shape, c, tuple(c) in nwset))
+            self.kinds_v192.append(kind_of(shape, c, tuple(c) in nwset, ramp=False))
         self.access = [tuple(a + b for a, b in zip(pos, rot(k, c))) for c in sh['access']]
         self.support = [tuple(a + b for a, b in zip(pos, rot(k, c))) for c in sh['mainSupportReq']]
         # Validateur du prefab : Plank/Beam = récursif (un appui suffit) ; sinon DefaultBP (MaxMissingSupport).

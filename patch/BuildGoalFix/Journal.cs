@@ -17,7 +17,7 @@ namespace CastleStory.BuildGoalFix
     // Observation pure : aucun hook de ce fichier ne modifie le comportement du jeu.
     // Fichier : Logistique.log à côté de la DLL. Une ligne par événement :
     //   [HH:mm:ss] t=<Time.time> EVT [ordre] Brictron ; clé=valeur ; ...
-    // ordre = P#<id>:<TypeProjet> | S#<id>:<TypeStation> | U (ordre joueur) | I (idle) | ?
+    // ordre = P#<id>:<TypeProjet> | S#<id>:<TypeStation> | U (ordre joueur) | T (transfert v1.10) | I (idle) | ?
     public static class Journal
     {
         private static readonly string Dir = Path.GetDirectoryName(typeof(Journal).Assembly.Location);
@@ -100,6 +100,7 @@ namespace CastleStory.BuildGoalFix
                     if (op != null) return "S#" + Id(giver) + ":" + Type(op);
                 }
                 if (l != null && l.Operable != null) return "S#" + Id(l.Operable.gameObject) + ":" + Type(l.Operable);
+                if (t != null && t.Description == Transfer.Description) return "T";   // v1.10 : transfert palette → palette
                 Labor.DecisionSource src;
                 if (l != null && LastSource.TryGetValue(l, out src) && src == Labor.DecisionSource.User) return "U";
                 if (l != null && l.Project != null)
@@ -331,6 +332,17 @@ namespace CastleStory.BuildGoalFix
                 if (!Enabled || l == null) return;
                 Log(string.Format("{0} [{1}] {2} ; {3} ; d={4} ; pos={5} ; tache={6}",
                     evt, OrderOf(l, l.CurrentTask), l.name, details, Dist(l, dest), Pos(l), TaskOf(l)));
+            }
+            catch (Exception e) { Error(e); }
+        }
+
+        // v1.10 : événement sans Brictron (TRANSFERT_DEBUT, TRANSFERT_TRAJET, TRANSFERT_ECHEC, TRANSFERT_FIN).
+        public static void Event(string evt, string details)
+        {
+            try
+            {
+                if (!Enabled) return;
+                Log(evt + " " + details);
             }
             catch (Exception e) { Error(e); }
         }

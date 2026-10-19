@@ -1810,5 +1810,114 @@
   "source": "level17 pathID 49 (VolumeDataComponent._indexedVolumetricProperties)",
   "validator": "LogBPValidator",
   "validator_source": "ValidatorComponent (validatorType, MaxMissingSupport) du m\u00eame prefab"
+ },
+ "Wood_Ramp_MidA": {
+  "access": [
+   [
+    -1,
+    0,
+    0
+   ],
+   [
+    1,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    -1
+   ],
+   [
+    -1,
+    1,
+    0
+   ],
+   [
+    1,
+    1,
+    0
+   ],
+   [
+    0,
+    1,
+    -1
+   ],
+   [
+    0,
+    -1,
+    -1
+   ],
+   [
+    1,
+    -1,
+    0
+   ],
+   [
+    -1,
+    -1,
+    0
+   ],
+   [
+    1,
+    -2,
+    0
+   ],
+   [
+    0,
+    -1,
+    1
+   ],
+   [
+    0,
+    -2,
+    1
+   ],
+   [
+    0,
+    1,
+    1
+   ],
+   [
+    -1,
+    -2,
+    0
+   ],
+   [
+    0,
+    -2,
+    -1
+   ],
+   [
+    0,
+    0,
+    1
+   ]
+  ],
+  "auxiliarySupportReq": [],
+  "fantome": [
+   [
+    0,
+    0,
+    0
+   ]
+  ],
+  "mainSupportReq": [
+   [
+    0,
+    0,
+    -1
+   ],
+   [
+    0,
+    0,
+    1
+   ]
+  ],
+  "maxMissing": 1,
+  "notWallSupport": [],
+  "source": "level17 pathID 118 (VolumeDataComponent._indexedVolumetricProperties)",
+  "validator": "PlankBPValidator",
+  "validator_source": "ValidatorComponent (validatorType, MaxMissingSupport) du m\u00eame prefab"
  }
 }

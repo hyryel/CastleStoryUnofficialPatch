@@ -13,6 +13,7 @@ REFRESH = 150          # recalcul périodique (3 s à 50 Hz)
 VALVE = 500            # 10 s sans aucune autorisation ni pose en cours : contrôle levé
 STALL = 900            # ticks sans pose = arrêt
 PENDING = 250          # v1.9.1 : Blueprint posé compté plein au plus 5 s en attendant que la grille relise ses cases
+STICKY = 500           # v1.9.3 : exclusions « inaccessible » retenues au plus 10 s (BuildOrder.StickySeconds)
 
 
 # ---------------------------------------------------------------- plan : adaptateurs
@@ -20,6 +21,9 @@ PENDING = 250          # v1.9.1 : Blueprint posé compté plein au plus 5 s en a
 class Adapter:
     """Interface commune : allowed(goal) -> (bool, raison), bonus(goal), signaled() -> {gid: raison}."""
     name = 'vanilla'
+
+    def busy(self):
+        return False
 
     def __init__(self, sim, project):
         self.sim, self.project = sim, project
@@ -117,16 +121,47 @@ class NewOrder(Adapter):
         self.valve = 0
         self.fasts = 0
         self.pending = {}        # v1.9.1 : gid -> (cellules, kinds, tick) des attribués disparus (posés), BuildOrder.Pending
+        self.sticky_time = 0     # v1.9.3 : dernier vidage des exclusions retenues (BuildOrder.Plan.StickyTime)
+        self.watch = {}          # v1.9.3 : gid -> (goal, tick) des Blueprints disparus (BuildOrder.Plan.Watch)
+        self.reeval = False
 
     FIX = False              # v1.9.1
+    FIX3 = False             # v1.9.3 : rampe = pente ; exclusions retenues vidées à chaque pose/annulation et après 10 s
+
+    def kinds(self, g):
+        return g.kinds if self.FIX3 else g.kinds_v192
 
     def signature(self):
         gs = [g for g in self.sim.goals if g.project == self.project and not g.placed]
         return (tuple(g.id for g in gs), tuple(g.id for g in gs if g.worker is not None))
 
+    def check_watch(self):
+        """v1.9.3 (BuildOrder.CheckWatch, chaque frame) : un Blueprint disparu du projet (posé ou annulé) devient
+        lisible dans les voxels, ou n'y apparaît pas en PENDING (annulé) : le monde a changé ; exclusions retenues
+        depuis STICKY : le monde a pu changer hors projet (autre ordre, terrain). Dans ces cas, les exclusions
+        « inaccessible » sont réévaluées par un calcul complet (échafaudage posé → accès ouvert)."""
+        changed = False
+        for gid in list(self.watch):
+            g, t0 = self.watch[gid]
+            if self.sim.visible(g) or self.sim.t - t0 > PENDING:
+                del self.watch[gid]
+                changed = True
+        if self.sticky and self.sim.t - self.sticky_time >= STICKY:
+            changed = True
+        if changed and self.sticky:
+            self.sticky.clear()
+            self.sticky_time = self.sim.t
+            self.reeval = True
+
+    def busy(self):
+        """Fin de simulation différée tant qu'une réévaluation est due (le jeu, lui, continue)."""
+        return bool(self.FIX3 and (self.watch or (self.sticky and self.sticky_time <= self.sim.last_place)))
+
     def plan(self):
+        if self.FIX3:
+            self.check_watch()
         sig = self.signature()
-        if sig == self.sig and self.sim.t - self.time < REFRESH:
+        if sig == self.sig and self.sim.t - self.time < REFRESH and not self.reeval:
             return
         self.sig = sig
         self.time = self.sim.t
@@ -141,8 +176,18 @@ class NewOrder(Adapter):
                 for gid, i in c.ids.items():
                     if gid not in ids_now and c.core.Infos[i].InFlight:
                         self.pending[gid] = (byid[gid], self.sim.t)
+        if self.FIX3:
+            # v1.9.3 (BuildOrder.Recluster) : Blueprints disparus surveillés jusqu'à ce que leurs cases soient lues.
+            byid = {g.id: g for g in self.sim.goals}
+            for c in self.clusters:
+                for gid in c.ids:
+                    if gid not in ids_now and gid not in self.watch:
+                        self.watch[gid] = (byid[gid], self.sim.t)
+        reeval = self.reeval
+        self.reeval = False
         if not ids_now <= self.known:
             self.sticky.clear()
+            self.sticky_time = self.sim.t
         self.known |= ids_now
         olds = list(self.clusters)
         used = set()
@@ -156,9 +201,9 @@ class NewOrder(Adapter):
                 if id(o) not in used and ids <= set(o.ids):
                     c = o
                     break
-            if c is not None and c.sig == csig and self.sim.t - c.time < REFRESH:
+            if c is not None and c.sig == csig and self.sim.t - c.time < REFRESH and not reeval:
                 pass
-            elif c is not None and self.sim.t - c.time < REFRESH and self.try_fast(c, members, csig):
+            elif c is not None and self.sim.t - c.time < REFRESH and not reeval and self.try_fast(c, members, csig):
                 pass
             else:
                 c = c or Cluster()
@@ -218,7 +263,7 @@ class NewOrder(Adapter):
             if self.sim.t - t0 > PENDING or self.sim.visible(g):
                 del self.pending[gid]
                 continue
-            for cc, k in zip(g.cells, g.kinds):
+            for cc, k in zip(g.cells, self.kinds(g)):
                 i = grid.IndexOf(cc)
                 if i >= 0:
                     grid.AssumePlaced(i, k)
@@ -231,7 +276,7 @@ class NewOrder(Adapter):
         c.ids = {}
         for g in goals:
             info = GoalInfo(len(infos), g.name)
-            for cc, k in zip(g.cells, g.kinds):
+            for cc, k in zip(g.cells, self.kinds(g)):
                 i = grid.IndexOf(cc)
                 if i >= 0:
                     info.Cells.append(i)
@@ -249,6 +294,7 @@ class NewOrder(Adapter):
             c.ids[g.id] = info.Id
             infos.append(info)
         core = BuildPlanCore(grid, infos)
+        core.PushCheck = self.FIX3
         core.People = [i for i in (grid.IndexOf(self.sim.world.grid.Position(b.pos)) for b in self.sim.bots) if i >= 0]
         core.Compute()
         for g in goals:
@@ -312,6 +358,13 @@ class NewOrder(Adapter):
         out = set()
         for c in self.clusters:
             if c.core is not None:
+                if self.FIX3:
+                    # v1.9.3 (BuildOrder.UpdatePeople, chaque frame) : poches que les poses en cours vont fermer,
+                    # évacuation sans attendre un refus d'attribution.
+                    core = c.core
+                    core.People = [i for i in (core.Grid.IndexOf(self.sim.world.grid.Position(b.pos))
+                                               for b in self.sim.bots) if i >= 0]
+                    core.MarkThreatened()
                 out |= {c.core.Grid.Position(p) for p in c.core.Threatened}
         return out
 
@@ -456,8 +509,15 @@ class NewOrder191(NewOrder):
     FIX = True
 
 
-ADAPTERS = {'vanilla': Adapter, 'v1.8': V18Order, 'v1.9': NewOrder, 'v1.9.1': NewOrder191}
-CURRENT = 'v1.9.1'
+class NewOrder193(NewOrder191):
+    """v1.9.3 : rampe = pente pour le plan ; exclusions « inaccessible » réévaluées à chaque pose ou annulation d'un
+    Blueprint du projet et au plus tard après STICKY (journal v1.9.2 : échafaudage posé, briques restées exclues)."""
+    name = 'v1.9.3'
+    FIX3 = True
+
+
+ADAPTERS = {'vanilla': Adapter, 'v1.8': V18Order, 'v1.9': NewOrder, 'v1.9.1': NewOrder191, 'v1.9.3': NewOrder193}
+CURRENT = 'v1.9.3'
 
 
 # ---------------------------------------------------------------- exécuteur
@@ -535,6 +595,8 @@ class Sim:
             for g in self.goals:
                 for c in g.cells:
                     self.cell_owner[c] = g
+                if g.project not in self.adapters:          # nouvel ordre (projet) ajouté par le joueur
+                    self.adapters[g.project] = ADAPTERS[self.variant](self, g.project)
             self.version += 1
             self.log.append((self.t, 'projet', '-', name))
             for a in self.adapters.values():
@@ -648,7 +710,7 @@ class Sim:
             if self.events:
                 self.fire_events()
             todo = [g for g in self.goals if not g.placed and g.id not in self.signaled_all()]
-            if not todo and all(b.goal is None for b in self.bots):
+            if not todo and all(b.goal is None for b in self.bots) and not any(a.busy() for a in self.adapters.values()):
                 break
             if self.t - self.last_place > STALL:
                 break

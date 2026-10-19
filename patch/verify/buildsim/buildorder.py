@@ -336,6 +336,7 @@ class BuildPlanCore:
         self.SeenGen = 0
         self.Cache = {}              # gid -> (ok, raison) : partie structurelle
         self.Lost = {}               # gid -> cases reliées que X couperait (test des Brictron à chaque appel)
+        self.PushCheck = True        # v1.9.3 : Brictron poussé sur X (pieds ou tête dans X) compté s'il serait enfermé
         self.HirePrefix = {}         # gid -> pelage des Blueprints d'avant X, X posé (test réussi)
         self.Disabled = False
         self.Note = ""
@@ -653,9 +654,7 @@ class BuildPlanCore:
         if not r[0]:
             return r
         # Brictron dans une poche que les poses en cours vont fermer : à évacuer (pas un motif de refus de X).
-        for p in self.People:
-            if self.BaseMarks[p] and not self.FutureMarks[p]:
-                self.Threatened.add(p)
+        self.MarkThreatened()
         lost = self.Lost.get(g)
         if lost:
             trapped = False
@@ -666,6 +665,37 @@ class BuildPlanCore:
             if trapped:
                 return False, "enfermerait un Brictron"
         return r
+
+    def MarkThreatened(self):
+        """Brictron relié aujourd'hui qu'une pose en cours va enfermer (BaseMarks sans FutureMarks) : à évacuer.
+        v1.9.3 : appelé aussi à chaque frame (BuildOrder.UpdatePeople), pas seulement sur un refus."""
+        for p in self.People:
+            if self.BaseMarks[p] and not self.FutureMarks[p]:
+                self.Threatened.add(p)
+
+    def PushDest(self, o):
+        """Case où le simulateur pousse un Brictron dont la case o cesse d'être debout : première case debout au-dessus
+        (1 à 3 voxels), sinon -1 (poussé de côté)."""
+        grid = self.Grid
+        yo = o % grid.ny
+        for dy in (1, 2, 3):
+            if yo + dy >= grid.ny:
+                return -1
+            if grid.StandAt(o + dy):
+                return o + dy
+        return -1
+
+    def ReachedOrPushed(self, a):
+        """Case atteinte, ou plus debout (occupant poussé) ; v1.9.3 : poussé sur une case elle-même reliée."""
+        grid = self.Grid
+        if grid.mark[a] == grid.gen:
+            return True
+        if grid.StandAt(a):
+            return False
+        if not self.PushCheck:
+            return True
+        d = self.PushDest(a)
+        return d < 0 or grid.mark[d] == grid.gen
 
     def TestCandidate(self, g):
         infos, grid = self.Infos, self.Grid
@@ -690,7 +720,7 @@ class BuildPlanCore:
             # Une case qui cesse d'être une case debout (remplie, ou tête bouchée) n'enferme pas : son occupant est
             # poussé. Seules comptent les cases debout coupées du bord (poches).
             for y in infos:
-                if y.InFlight and not y.Placed and not all(grid.mark[a] == grid.gen or not grid.StandAt(a)
+                if y.InFlight and not y.Placed and not all(self.ReachedOrPushed(a)
                                           for a in self.Likely(y.Id, self.BaseMarks, self.BaseCost)):
                     return False, "couperait l'accès de " + y.Name + " (attribué)"
             # Cases reliées aujourd'hui que X couperait (hors cases de X et dessous : Brictron poussé, pas enfermé).
@@ -700,6 +730,22 @@ class BuildPlanCore:
                 if mark[i] != gen and grid.StandAt(i):
                     lost.add(i)
             grid.c.scan += len(self.BaseList)
+            # v1.9.3 : Brictron dont X remplit les pieds ou la tête : poussé vers la première case debout au-dessus
+            # (hypothèse pessimiste du simulateur, ex. planche posée au-dessus de lui) ; si elle n'est pas reliée au
+            # bord (planches sans rampe), il serait enfermé.
+            ny = grid.ny
+            for k, c in (enumerate(x.Cells) if self.PushCheck else ()):
+                if x.Kind[k] == O_PASS:
+                    continue
+                y0 = c % ny
+                for o in (c, c - 1):
+                    if o == c - 1 and y0 == 0:
+                        continue
+                    if not self.BaseMarks[o]:
+                        continue
+                    d = self.PushDest(o)
+                    if d >= 0 and mark[d] != gen:
+                        lost.add(o)
             if lost:
                 self.Lost[g] = lost
             # 2) État futur (attribués posés) + X : le poseur ressort aussi une fois les attribués posés.
@@ -707,12 +753,12 @@ class BuildPlanCore:
             grid.Flood()
             # (cases choisies maintenant ou après les poses en cours : le poseur peut encore y être)
             # (une case remplie par une pose en cours : son occupant est poussé, pas enfermé)
-            if not all(grid.mark[a] == grid.gen or not grid.StandAt(a) for a in before) or \
-                    not all(grid.mark[a] == grid.gen or not grid.StandAt(a)
+            if not all(self.ReachedOrPushed(a) for a in before) or \
+                    not all(self.ReachedOrPushed(a)
                             for a in self.Likely(g, self.FutureMarks, self.FutureCost)):
                 return False, "enfermerait le poseur (après les poses en cours)"
             for y in infos:
-                if y.InFlight and not y.Placed and not all(grid.mark[a] == grid.gen or not grid.StandAt(a)
+                if y.InFlight and not y.Placed and not all(self.ReachedOrPushed(a)
                                           for a in self.Likely(y.Id, self.BaseMarks, self.BaseCost)):
                     return False, "enfermerait le poseur de " + y.Name + " (attribué)"
             # Le pelage de base, depuis le même état final (X posé dans les deux cas), retire les Blueprints posés après

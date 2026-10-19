@@ -284,6 +284,52 @@ def check_all_placed(sim):
     return None if not left else '%d non posés : %s' % (len(left), left[:3])
 
 
+# --- v1.9.3 : journal buildgoalfix-2026-10-19-v1.9.2.log (ordre #-1078470, à partir de 19:35) ---
+# Tour 6×6 sans escalier : Stone_DoubleBrick (53), (54), (55) de la 4e rangée (mur ouest, x=544) signalées, comme ici
+# T_r4_10_10/12/14 (x=10). Le joueur ajoute un échafaudage en bois le long du mur ouest (cible_pos du journal
+# logistique, translation (-534, -100, -705)) : poteaux et entretoises au sol (x=9, y=1, sous chaque planche), planches à y=2 posées contre
+# le mur (dessus praticable à y=3, d'où se posent les briques y=4), rampe Wood_Ramp_MidA en (8, 2, 15) : marche d'un
+# voxel depuis le sol, puis d'un voxel vers le dessus des planches. Poutres et planches partagent une case dans la
+# partie ((9) en 543,102,716) : remplacées ici par des planches seules (un Blueprint par case). En v1.9.2 la rampe
+# prévue est vue pleine (dessus à 2 voxels du sol) → briques toujours « inaccessibles », exclusion retenue (Sticky)
+# après la pose de l'échafaudage, rien n'est attribué pendant 2 min. Attendu : briques posées depuis l'échafaudage.
+
+def add_scaffold_wood(w, goals, project=0, ramp=True, deck=True):
+    if deck:
+        # poteaux et entretoises sous chaque planche (entretoise appuyée sur le poteau voisin). Planche au-dessus
+        # d'une case debout libre : le simulateur pousse son occupant sur la planche (hypothèse pessimiste), enfermé
+        # tant que la rampe n'est pas posée — écart connu, hors de ce scénario (voir rapport v1.9.3).
+        for (n, shape, p, k) in (('Wood_VerticalBeam (5)', 'Wood_VerticalBeam', (9, 1, 10), 0),
+                                 ('Wood_Brace (3)', 'Wood_Brace', (9, 1, 11), 0),
+                                 ('Wood_VerticalBeam (15)', 'Wood_VerticalBeam', (9, 1, 12), 0),
+                                 ('Wood_VerticalBeam (8)', 'Wood_VerticalBeam', (9, 1, 13), 0),
+                                 ('Wood_Brace (4)', 'Wood_Brace', (9, 1, 14), 2),
+                                 ('Wood_VerticalBeam (3)', 'Wood_VerticalBeam', (9, 1, 15), 0)):
+            goals.append(Goal(len(goals), n, shape, p, k, project))
+        # planches orientées est-ouest : appuis (8, 2, z) et (10, 2, z) = mur de la tour (2e rangée, posée)
+        for z in range(11, 16):
+            goals.append(Goal(len(goals), 'Wood_SinglePlank_%d' % z, 'Wood_SinglePlank', (9, 2, z), 1, project))
+    if ramp:
+        # appui (9, 2, 15) = planche ; rampe = pente (vérité terrain : bloc non plein, journal v1.9.2 19:39:00-08)
+        goals.append(Goal(len(goals), 'Wood_Ramp_MidA (2)', 'Wood_Ramp_MidA', (8, 2, 15), 1, project))
+
+
+def add_scaffold_deck(w, goals):
+    add_scaffold_wood(w, goals, ramp=False)
+
+
+def add_scaffold_ramp(w, goals):
+    add_scaffold_wood(w, goals, deck=False)
+
+
+def add_scaffold_other(w, goals):
+    add_scaffold_wood(w, goals, project=1)
+
+
+def deck_placed(sim):
+    return all(g.placed for g in sim.goals if g.name.startswith('Wood_SinglePlank'))
+
+
 SCENARIOS = [
     Scenario('mur_ouvert', 'tout construit', s_mur_ouvert),
     Scenario('couloir_1', 'fond avant porche', s_couloir),
@@ -309,6 +355,15 @@ SCENARIOS = [
              read_lag=READ_LAG, events=[('5e rangée', lambda sim: placed_count(sim) >= 26, add_row5),
                                         ('escalier', lambda sim: '5e rangée' in sim.fired and stalled(sim), add_stairs5)],
              check=check_all_placed),
+    Scenario('reel_v192_echafaudage', 'échafaudage ajouté une fois bloqué : tout posé', s_tour4, bots=7,
+             read_lag=READ_LAG, events=[('échafaudage', stalled, add_scaffold_wood)], check=check_all_placed),
+    Scenario('reel_v192_echaf_rampe_apres', 'planches puis rampe ajoutée une fois posées : tout posé', s_tour4,
+             bots=7, read_lag=READ_LAG,
+             events=[('planches', stalled, add_scaffold_deck),
+                     ('rampe', lambda sim: 'planches' in sim.fired and deck_placed(sim), add_scaffold_ramp)],
+             check=check_all_placed),
+    Scenario('echafaudage_autre_ordre', 'échafaudage dans un autre ordre : tout posé', s_tour4, bots=7,
+             read_lag=READ_LAG, events=[('échafaudage', stalled, add_scaffold_other)], check=check_all_placed),
 ]
 
 

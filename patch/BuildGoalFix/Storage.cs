@@ -27,6 +27,9 @@ namespace CastleStory.BuildGoalFix
     //   ressource est refusé s'il existe un stockage connu déjà entamé de cette ressource, de la même faction,
     //   accessible, avec de la place libre (réservations déduites), à moins de CompleteSlack mètres de plus que lui.
     //   But : une palette de pierre atteint 80 (conversion en 4 blocs) au lieu de plusieurs palettes entamées.
+    // v1.10 (Transfer.cs) : une palette source d'un transfert actif refuse tout dépôt automatique (L) et n'est pas une
+    //   « palette entamée » pour CompleteFirst ; la destination d'un transfert n'est jamais redirigée par M (le joueur l'a
+    //   choisie), la réservation est posée quand même.
     // Réservations expirées au bout de MaxAge secondes ou si le Brictron est détruit / n'a plus la ressource.
     // État serveur uniquement, non sérialisé, aucun message réseau.
     public static class Storage
@@ -64,8 +67,10 @@ namespace CastleStory.BuildGoalFix
         {
             try
             {
-                if (!result || !Enabled || gc == null || item == null) return result;
+                if (!result || gc == null) return result;
                 Recepteur r = gc.recepteur;
+                if (Transfer.BlocksStorage(r)) return false;   // v1.10 : source en cours de vidage
+                if (!Enabled || item == null) return result;
                 if (r == null || r.Fonction != FonctionDeContenant.entrepot) return result;
                 if (KnownStorages.Count > 512) KnownStorages.RemoveWhere(x => x == null || x.IsNullOrReleased());
                 KnownStorages.Add(r);
@@ -98,7 +103,8 @@ namespace CastleStory.BuildGoalFix
                 if (room < 0) return contenant;
                 int free = room - Reserved(r, t, labor);
                 GameComponent target = contenant;
-                if (free <= 0 && Knowledge.Instance != null)
+                // v1.10 : destination imposée par un transfert : jamais redirigée.
+                if (free <= 0 && Knowledge.Instance != null && !Transfer.IsForcedDestination(labor, contenant))
                 {
                     IGameComponent fresh = Knowledge.Instance.ClosestStorageWithRoomFor(labor, item, labor.faction);
                     GameComponent other = fresh != null && !fresh.IsNullOrReleased() ? fresh.GameObject.GetComponent<GameComponent>() : null;
@@ -149,6 +155,7 @@ namespace CastleStory.BuildGoalFix
             foreach (Recepteur p in KnownStorages)
             {
                 if (p == null || p == r || p.IsNullOrReleased() || p.Fonction != FonctionDeContenant.entrepot) continue;
+                if (Transfer.BlocksStorage(p)) continue;   // v1.10 : source en cours de vidage
                 if (p.ContentDescription.Value(t) <= 0 || p.IsFull()) continue;
                 if (Vector3.Distance(from, p.transform.position) > limit) continue;
                 GameComponent pgc = p.GetComponent<GameComponent>();
@@ -160,6 +167,18 @@ namespace CastleStory.BuildGoalFix
                 return true;
             }
             return false;
+        }
+
+        // v1.10 (Transfer) : place libre en objets pour `item` dans r, réservations des autres Brictron déduites ;
+        // -1 = non calculable (voir Room).
+        internal static int FreeRoom(Recepteur r, IGameComponent item, Labor exclude)
+        {
+            if (r == null || item == null) return -1;
+            Ressource res = Apparence.PrincipaleOf(item);
+            if (res == null) return -1;
+            int room = Room(r, item, res);
+            if (room < 0) return -1;
+            return Math.Max(0, room - Reserved(r, res.GetType(), exclude));
         }
 
         // Place libre pour la ressource, en objets : capacité de la ressource et encombrement (si le stockage en a un).

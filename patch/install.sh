@@ -17,4 +17,6 @@ dotnet "$(native "$HERE/BuildGoalFix.Patcher/bin/Release/net8.0/BuildGoalFix.Pat
 mv "$DLL.tmp" "$DLL"
 sha "$DLL" > "$STAMP"
 cp "$HERE/BuildGoalFix/bin/Release/net35/CastleStory.BuildGoalFix.dll" "$M/CastleStory.BuildGoalFix.dll.tmp" && mv "$M/CastleStory.BuildGoalFix.dll.tmp" "$M/CastleStory.BuildGoalFix.dll"  # remplacement atomique (jeu éventuellement en cours)
+# v1.9.3 : compteur « Goals » du panneau de construction rafraîchi à chaque pose (Info/Lua, voir lua.sh).
+"$HERE/lua.sh" install
 echo "Correctif installé. Log : $M/BuildGoalFix.log"

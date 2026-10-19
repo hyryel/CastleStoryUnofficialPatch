@@ -371,6 +371,7 @@ namespace CastleStory.BuildGoalFix
         public readonly List<int> People = new List<int>();
         public readonly List<int> Threatened = new List<int>();
         public bool Disabled;
+        public bool PushCheck = true;   // v1.9.3 : Brictron poussé sur X (pieds ou tête dans X) compté s'il serait enfermé
         public string Stuck = "";
         public long Peels, PeelSteps, Tests;
         private readonly Dictionary<int, int> owner = new Dictionary<int, int>();
@@ -495,7 +496,8 @@ namespace CastleStory.BuildGoalFix
             return false;
         }
 
-        // Toutes les cases de la liste sont atteintes (ou, si allowFilled, ne sont plus des cases debout).
+        // Toutes les cases de la liste sont atteintes (ou, si allowFilled, ne sont plus des cases debout ; v1.9.3 : et
+        // l'occupant, poussé sur la première case debout au-dessus, y reste relié).
         private bool AllReached(List<int> cells, bool allowFilled)
         {
             int[] mark = Grid.Mark;
@@ -504,10 +506,39 @@ namespace CastleStory.BuildGoalFix
             {
                 int a = cells[k];
                 if (mark[a] == gen) continue;
-                if (allowFilled && !Grid.StandAt(a)) continue;
+                if (allowFilled && !Grid.StandAt(a))
+                {
+                    if (!PushCheck) continue;
+                    int d = PushDest(a);
+                    if (d < 0 || mark[d] == gen) continue;
+                }
                 return false;
             }
             return true;
+        }
+
+        // v1.9.3 : case où un Brictron dont la case o cesse d'être debout est poussé : première case debout au-dessus
+        // (1 à 3 voxels), sinon -1 (poussé de côté). Hypothèse pessimiste du simulateur [D].
+        private int PushDest(int o)
+        {
+            int yo = o % Grid.Ny;
+            for (int dy = 1; dy <= 3; dy++)
+            {
+                if (yo + dy >= Grid.Ny) return -1;
+                if (Grid.StandAt(o + dy)) return o + dy;
+            }
+            return -1;
+        }
+
+        // Brictron relié aujourd'hui qu'une pose en cours va enfermer (BaseMarks sans FutureMarks) : à évacuer.
+        // v1.9.3 : appelé aussi à chaque frame (BuildOrder.UpdatePeople), pas seulement sur un refus d'attribution.
+        public void MarkThreatened()
+        {
+            for (int k = 0; k < People.Count; k++)
+            {
+                int p = People[k];
+                if (BaseMarks[p] != 0 && FutureMarks[p] == 0 && !Threatened.Contains(p)) Threatened.Add(p);
+            }
         }
 
         // --- calcul de base ---
@@ -840,11 +871,7 @@ namespace CastleStory.BuildGoalFix
             reason = cacheReason[g];
             if (cacheState[g] != 1) return false;
             // Brictron dans une poche que les poses en cours vont fermer : à évacuer (pas un motif de refus de X).
-            for (int k = 0; k < People.Count; k++)
-            {
-                int p = People[k];
-                if (BaseMarks[p] != 0 && FutureMarks[p] == 0 && !Threatened.Contains(p)) Threatened.Add(p);
-            }
+            MarkThreatened();
             List<int> lost = lostCells[g];
             if (lost != null && lost.Count > 0)
             {
@@ -911,6 +938,25 @@ namespace CastleStory.BuildGoalFix
                     if (mark[i] != gen && Grid.StandAt(i)) lost.Add(i);
                 }
                 Grid.Scan += baseList.Count;
+                // v1.9.3 : Brictron dont X remplit les pieds ou la tête : poussé vers la première case debout au-dessus
+                // (planche posée au-dessus de lui) ; si elle n'est pas reliée au bord, il serait enfermé.
+                if (PushCheck)
+                {
+                    int ny = Grid.Ny, before0 = lost.Count;
+                    for (int k = 0; k < x.Cells.Count; k++)
+                    {
+                        if (x.Kind[k] == PlanGrid.OPass) continue;
+                        int c = x.Cells[k];
+                        for (int o = c; o >= c - 1; o--)
+                        {
+                            if (o == c - 1 && c % ny == 0) continue;
+                            if (BaseMarks[o] == 0) continue;
+                            int d = PushDest(o);
+                            if (d >= 0 && mark[d] != gen && !lost.Contains(o)) lost.Add(o);
+                        }
+                    }
+                    if (lost.Count != before0) lost.Sort();   // BinarySearch dans Allowed
+                }
                 // 2) État futur (attribués posés) + X : le poseur ressort aussi une fois les attribués posés (cases
                 //    choisies maintenant ou après les poses en cours : il peut encore y être).
                 SetInFlight(true);

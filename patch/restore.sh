@@ -7,3 +7,4 @@ set -euo pipefail
 cp -p "$DLL.orig" "$DLL"
 rm -f "$M/CastleStory.BuildGoalFix.dll" "$M/BuildGoalFix.patched.sha256"
 echo "DLL d'origine restaurée (sauvegarde conservée : $DLL.orig)"
+"$HERE/lua.sh" restore

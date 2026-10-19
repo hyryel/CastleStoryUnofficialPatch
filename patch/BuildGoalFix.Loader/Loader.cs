@@ -307,6 +307,25 @@ namespace CastleStory.BuildGoalFix
             Log("Builder.CanPassThrough : " + t + " ret patché(s)");
             if (t < 1) throw new Exception("Builder.CanPassThrough : aucun ret");
 
+            // ----- v1.10 : transfert palette → palette (classe Transfer) -----
+            var transfer = new TypeReference(HooksAssembly, "Transfer", module, asmRef);
+            // U : Livre.Lire(patron, emplacement) : File.ReadAllText(path) → Transfer.ReadLivre(path) (Index.txt + fichier lu)
+            MethodDefinition lire = Find(module, "Brix.Legacy.Livre", "Lire", 2);
+            int u = ReplaceCalls(transfer, lire,
+                mr => mr.DeclaringType.FullName == "System.IO.File" && mr.Name == "ReadAllText" && mr.Parameters.Count == 1, "ReadLivre");
+            if (u != 2) throw new Exception("Livre.Lire : " + u + " appel(s) File.ReadAllText au lieu de 2");
+            // V : fin de Instructions.Batire() → Transfer.AfterBatire() (commandes et conditions de la roue)
+            int v = WrapRetVoid(module, transfer, "Brix.Legacy.Instructions", "Batire", 0, "AfterBatire", false);
+            if (v < 1) throw new Exception("Instructions.Batire : aucun ret");
+            // W : entrée de UNetProjectCmd.CmdStockpileAcceptOnly(go, s) : if (Transfer.OnAcceptOnly(this, go, s)) return;
+            EntryIntercept(module, transfer, "Brix.Game.Network.UNetProjectCmd", "CmdStockpileAcceptOnly", 2, "OnAcceptOnly");
+            // X : Transfer.AfterIdleInstruction(this, labor, result) sur chaque ret de IdleProject._GetInstruction
+            int x = WrapRetVoid(module, transfer, "IdleProject", "_GetInstruction", 2, "AfterIdleInstruction", true);
+            if (x < 1) throw new Exception("IdleProject._GetInstruction : aucun ret");
+            // Y : entrée de Task.OnFinally → Transfer.OnTaskEnd(this)
+            Entry(module, transfer, "Brix.Game.AI.Task", "OnFinally", 0, "OnTaskEnd", true);
+            Log(string.Format("transfert : Livre.Lire {0} appel(s) ReadAllText, Batire {1} ret, _GetInstruction {2} ret + entrées CmdStockpileAcceptOnly (interception), Task.OnFinally", u, v, x));
+
             Log(string.Format("IsMatchFor : {0} ret patché(s) ; GetPrepareFunction : {1} ret patché(s) ; TakeSome, EndWork, _GoPickUp, TakeFromEnumerable, ClosestObjectToPickup : entrée patchée ; _ClosestObjectToPickup_Test : {2} ret ; FindOneResource : {3} ret ; journal : Project.Hire {4} ret, IOperableExtender.Hire {5} ret, StoreEverything {6} ret + entrées SendOrder, AbsorbGarnottes, OperationSwitchTask, Recipe.Finish, DropAll, Task.OnFinally ; stockage : _ClosestStorageWithRoomFor_Test {7} ret, StoreEverything {8} ret + entrées ClosestStorageWithRoomFor, GoStoreIn, Task.OnFinally", a, b, e, f, j1, j2, j4, l, n));
         }
 
@@ -367,6 +386,43 @@ namespace CastleStory.BuildGoalFix
                 seq.Add(il.Create(OpCodes.Call, h));
                 return seq.ToArray();
             });
+        }
+
+        // Hook en entrée avec retour anticipé (méthode void) : if (<hooks>.<hook>([this,] params...)) return;
+        private static void EntryIntercept(ModuleDefinition module, TypeReference hooks, string type, string name, int paramCount, string hook)
+        {
+            MethodDefinition m = Find(module, type, name, paramCount);
+            if (m.ReturnType.FullName != "System.Void") throw new Exception(type + "." + name + " : méthode non void");
+            var h = new MethodReference(hook, module.TypeSystem.Boolean, hooks);
+            if (!m.IsStatic) h.Parameters.Add(new ParameterDefinition(m.DeclaringType));
+            for (int i = 0; i < paramCount; i++) h.Parameters.Add(new ParameterDefinition(m.Parameters[i].ParameterType));
+            m.Body.SimplifyMacros();
+            ILProcessor il = m.Body.GetILProcessor();
+            Instruction first = m.Body.Instructions[0];
+            if (!m.IsStatic) il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+            for (int i = 0; i < paramCount; i++) il.InsertBefore(first, il.Create(OpCodes.Ldarg, m.Parameters[i]));
+            il.InsertBefore(first, il.Create(OpCodes.Call, h));
+            il.InsertBefore(first, il.Create(OpCodes.Brfalse, first));
+            il.InsertBefore(first, il.Create(OpCodes.Ret));
+            m.Body.OptimizeMacros();
+        }
+
+        // Remplace chaque appel statique reconnu par `match` par un appel à <hooks>.<hook> de même signature.
+        private static int ReplaceCalls(TypeReference hooks, MethodDefinition m, Func<MethodReference, bool> match, string hook)
+        {
+            m.Body.SimplifyMacros();
+            int n = 0;
+            foreach (Instruction i in m.Body.Instructions)
+            {
+                MethodReference mr = i.Operand as MethodReference;
+                if (i.OpCode != OpCodes.Call || mr == null || mr.HasThis || !match(mr)) continue;
+                var h = new MethodReference(hook, mr.ReturnType, hooks);
+                foreach (ParameterDefinition p in mr.Parameters) h.Parameters.Add(new ParameterDefinition(p.ParameterType));
+                i.Operand = h;
+                n++;
+            }
+            m.Body.OptimizeMacros();
+            return n;
         }
 
         // Remplace chaque constante entière (ldc.i4*) égale à `expected` qui précède immédiatement une instruction `next` par
