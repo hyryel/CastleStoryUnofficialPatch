@@ -36,6 +36,8 @@ namespace CastleStory.BuildGoalFix
     // v1.4 : journal unifié Logistique.log (Journal.cs, clé LogAll) : embauches de tous projets et stations, Tasks,
     //        ramassages/dépôts effectifs, garnottes, échanges, production, dépôt au sol, fin de Task, distances/odomètre.
     // v1.5 : réservation de capacité des stockages (Storage.cs, clé StorageReserve).
+    // v1.6 : ordre de construction (BuildOrder.cs, clés BuildReach / BuildPlan) : Blueprint inaccessible ou dont la
+    //        pose couperait l'accès d'un autre → non attribué ; bonus de priorité de l'intérieur vers l'extérieur.
     // Appelé depuis l'IL de Assembly-CSharp-firstpass, réécrit sur disque par BuildGoalFix.Patcher (install.sh).
     public static class Hooks
     {
@@ -62,6 +64,9 @@ namespace CastleStory.BuildGoalFix
         private static readonly bool LogAll;
         // v1.5 : réservation de capacité des stockages (Storage.cs).
         private static readonly bool StorageReserve;
+        // v1.6 : garde d'accessibilité / non-coupure et plan de construction (BuildOrder.cs).
+        private static readonly bool BuildReach;
+        private static readonly bool BuildPlan;
 
         private static readonly FieldInfo WorkersField =
             typeof(Goal).GetField("workers", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -81,11 +86,21 @@ namespace CastleStory.BuildGoalFix
             PickupFilter = cfg["PickupFilter"];
             LogAll = cfg["LogAll"];
             StorageReserve = cfg["StorageReserve"];
+            BuildReach = cfg["BuildReach"];
+            BuildPlan = cfg["BuildPlan"];
             Journal.Enabled = LogAll;
             Storage.Enabled = StorageReserve;
-            Log(string.Format("Hooks v1.5 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8} StorageReserve={9}",
-                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll, StorageReserve));
+            BuildOrder.ReachEnabled = BuildReach;
+            BuildOrder.PlanEnabled = BuildPlan;
+            Log(string.Format("Hooks v1.6 chargés : FilterIsMatchFor={0} GuardPrepare={1} ProjectLimit={2} ClampPickup={3} Verbose={4} LogCapacity={5} LogOrders={6} PickupFilter={7} LogAll={8} StorageReserve={9} BuildReach={10} BuildPlan={11}",
+                PatchMatch, PatchPrepare, ProjectLimit, ClampPickupEnabled, Verbose, LogCapacity, LogOrders, PickupFilter, LogAll, StorageReserve, BuildReach, BuildPlan));
         }
+
+        // Accès pour BuildOrder.
+        internal static bool OrdersLogged { get { return LogOrders; } }
+        internal static void LogLine(string msg) { Log(msg); }
+        internal static string OrderTagOf(BuildGoal goal) { return OrderTag(goal); }
+        internal static List<BuildGoal> ProjectGoalsOf(BuildGoal goal) { return ProjectGoals(goal); }
 
         // Force le constructeur statique (config) depuis une autre classe de hooks appelée avant Hooks.
         internal static void EnsureLoaded() { }
@@ -95,7 +110,16 @@ namespace CastleStory.BuildGoalFix
             try
             {
                 if (LogCapacity) LogCapacityOnce(goal);
-                if (!result || !PatchMatch) return result;
+                if (!result) return result;
+                // v1.6 : Blueprint inaccessible, ou dont la pose couperait l'accès d'un autre.
+                string why;
+                if (BuildReach && !BuildOrder.Allowed(goal, out why))
+                {
+                    if (Verbose) Log(string.Format("{0} {1} refusé à {2} : {3}", OrderTag(goal), goal.name, labor != null ? labor.name : "?", why));
+                    errorDestination.AddDecisionError(SharedWorkException<Exceptions.CantReach>.Get.Problem, labor);
+                    return false;
+                }
+                if (!PatchMatch) return result;
                 // Filtre : stats projet mises en cache pour le pas fixe courant (IsMatchFor est appelé pour chaque Goal).
                 if (!IsCrowded(goal, labor) && !(ProjectLimit && IsProjectCovered(goal, labor, true))) return result;
                 errorDestination.AddDecisionError(SharedWorkException<Exceptions.GoalTooCrowded>.Get.Problem, labor);
@@ -111,7 +135,7 @@ namespace CastleStory.BuildGoalFix
         public static Func<BaseLabor, bool> WrapPrepare(Func<BaseLabor, bool> original, Goal goal)
         {
             BuildGoal build = goal as BuildGoal;
-            bool guard = build != null && PatchPrepare;
+            bool guard = build != null && (PatchPrepare || BuildReach);
             if (!guard && !LogAll) return original;
             return labor =>
             {
@@ -122,8 +146,10 @@ namespace CastleStory.BuildGoalFix
                     {
                         // Test atomique avant Hire : stats projet recalculées (d'autres Brictron ont pu être
                         // embauchés plus tôt dans le même pas fixe).
-                        crowded = IsCrowded(build, labor as Labor)
-                            || (ProjectLimit && IsProjectCovered(build, labor as Labor, false));
+                        string why;
+                        crowded = (BuildReach && !BuildOrder.Allowed(build, out why))
+                            || (PatchPrepare && (IsCrowded(build, labor as Labor)
+                                || (ProjectLimit && IsProjectCovered(build, labor as Labor, false))));
                     }
                     catch (Exception e) { LogError(e); crowded = false; }
                     if (crowded) return false;
@@ -155,6 +181,7 @@ namespace CastleStory.BuildGoalFix
                     return;
                 }
                 ProjectStats stats = ComputeStats(build);
+                if (task.result != TaskResult.Succes) outcome += BuildOrder.Describe(build);
                 Log(string.Format("{0} {1} : {2} fin de tâche {3} ; reste {4} ; porte {5}",
                     OrderTag(build), build.name, labor != null ? labor.name : "?", outcome,
                     build.recepteur != null ? Describe(build.recepteur.CurrentCapacity) : "?",
@@ -679,7 +706,7 @@ namespace CastleStory.BuildGoalFix
             {
                 { "FilterIsMatchFor", true }, { "GuardPrepare", true }, { "ProjectLimit", true }, { "ClampPickup", true },
                 { "Verbose", false }, { "LogCapacity", true }, { "LogOrders", true }, { "PickupFilter", true }, { "LogAll", true },
-                { "StorageReserve", true },
+                { "StorageReserve", true }, { "BuildReach", true }, { "BuildPlan", true },
             };
             try
             {

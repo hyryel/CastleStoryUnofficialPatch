@@ -248,3 +248,34 @@ Expiration : 90 s, Brictron détruit, ou sac sans la ressource réservée. Une r
 Effet de bord voulu : `StorableGoal.CouldStore`, `CleanUpGoal.IsMatchFor`, `Project.VerifyWorkFor`, `CraftingStation.CanStore` passent par L : un Brictron n'est plus embauché pour creuser/récolter/nettoyer si tous les stockages sont déjà couverts par des Brictron en route.
 Non fait (option du §8) : exiger la place pour toute la charge quand un autre stockage l'a ; un dépôt partiel reste possible (vanilla : `GoStoreInBestStorage` boucle jusqu'au sac vide).
 Vérification hors jeu : métadonnées identiques à l'original ; les 25 appels injectés vers `CastleStory.BuildGoalFix` résolus (Cecil `Resolve`).
+
+## 10. v1.6 : ordre de construction (2026-10-19)
+
+Constat utilisateur : un Brictron pose un bloc sur le trajet et rend inaccessible le Blueprint d'un autre (`PathExecutionFailed` après 100 m et plus, test v1.5). Pas d'échafaudage automatique (refusé).
+
+### 10.1 Étude : modèle de déplacement [O]
+
+| Point | Code |
+|---|---|
+| Case « debout » = `Voxel.IsOpenAndWalkable(p)` : `p+1` vide, et `p` en pente (non plein) ou `p` vide sur `p-1` plein | `FP/Brix.Engine/Voxel.cs:229-240` |
+| Nœuds du graphe : cases debout hors arbres / blocage nature (`IsNatureBlocker`), plus les volumes `walkable` (escaliers, rampes posés) | `FP/Brix.Pathfinding.Test/TestPathfinding.cs:640-690, 778-800` |
+| Voisins : 4 directions ; même hauteur, sinon ±1 voxel ; dénivelé < 10 tiers de niveau (1 voxel = 6) : **un Brictron monte ou descend 1 voxel au plus** | `TerrainPathNode.cs:172-239`, constantes `TestPathfinding.cs:95-111` |
+| Branches `Breaking` (casser un bloc) et `Ladder` existent ; un Brictron constructeur n'accepte que jusqu'à `Climbing` | `SearchPathRequest.cs:45-51`, `PathBranch.cs` |
+| Cases d'accès d'un Blueprint = positions de nœuds debout (`AccessPositions` indexé par `RepresentativePosition`) | `BuildGoalFinder.cs:291-300` |
+| Cases qui deviennent pleines : `volume.blueprint` = `GetCases(fantome)` | `FP/Brix.Engine/MultiBlockVolume.cs:41` |
+| Vanilla : priorité `(128−y)×10 − distance − 10 (autre worker) − 100 (Blueprint plus bas voisin)` ; `buildable` = support seulement | `BuildGoal.cs:205-210, 299-312` ; `ValidatorComponent.cs:105-156` |
+
+### 10.2 Implémentation (classe `BuildOrder`, `patch/BuildGoalFix/BuildOrder.cs`)
+
+Par projet (`BuildGoalProvider`), mis en cache, recalculé quand la liste des Blueprints change ou au bout de 3 s : grille locale (emprise des Blueprints + 6 voxels autour, 3 dessous, 4 dessus ; abandon au-delà de 600 000 cases), parcours en largeur des cases debout depuis le bord de la grille (= reste du monde).
+
+| Étape | Clé | Règle |
+|---|---|---|
+| 1a accès | `BuildReach` | Blueprint accessible si une case d'accès est reliée au bord. **Informatif** (journal) : le modèle ignore les échelles et vanilla teste déjà l'accès réel au choix |
+| 1b non-coupure | `BuildReach` | Blueprint X refusé (`CantReach`, dans `IsMatchFor` et avant `Hire` dans `WrapPrepare`) si sa pose retire du parcours toutes les cases d'accès d'un autre Blueprint accessible. Calculé seulement si X occupe une case debout du parcours ou la tête d'une case. Sécurités : aucun Blueprint accessible, ou tous coupent quelqu'un → contrôle levé |
+| 2 plan | `BuildPlan` | Bonus ajouté à `BuildGoal.PriorityFor` (hook P) : `3 × min(profondeur, 20)`, profondeur = distance au bord des cases d'accès quand tout le projet est construit ; Blueprint enfermé dans l'état final → profondeur max + 5. Effet : de l'intérieur vers l'extérieur, en plus du « bas d'abord » vanilla |
+
+Portes (`Door`, `HeavyDoor`) : comptées passables. Les autres objets (palettes, ateliers) sont comptés pleins.
+Journal (BuildGoalFix.log) : `[Ordre #id] accès : N Blueprint(s), x inaccessible(s), y reporté(s) [X coupe Y…] ; cases, ms` à chaque changement ; sur échec d'une Task de construction : `accès oui/NON (reporté : coupe …)`.
+Vérification hors jeu : `patch/verify/grid_sim.py` (portage Python de la grille) : couloir coupé par un bloc de 2 de haut → reporté ; un bloc seul ne coupe pas (on grimpe 1 voxel) ; pièce : la porte qui ferme est reportée, l'intérieur passe en tête ; mur ouvert : aucune coupure. DLL : métadonnées identiques, 26/26 appels de hooks résolus.
+Limites [D] : obstacles mobiles et Brictron ignorés ; pentes simplifiées ; deux poses simultanées qui ne coupent qu'ensemble passent (rattrapé au calcul suivant).

@@ -271,6 +271,12 @@ namespace CastleStory.BuildGoalFix
             // O : entrée de Task.OnFinally → Storage.OnTaskEnd(this)
             Entry(module, storage, "Brix.Game.AI.Task", "OnFinally", 0, "OnTaskEnd", true);
 
+            // ----- v1.6 : plan de construction (classe BuildOrder) -----
+            // P : return BuildOrder.AfterPriority(result, this, labor, ref time) sur chaque ret de BuildGoal.PriorityFor
+            var buildOrder = new TypeReference(HooksAssembly, "BuildOrder", module, asmRef);
+            int p = WrapRet(module, buildOrder, "Brix.Game.AI.BuildGoal", "PriorityFor", 2, "AfterPriority", true);
+            Log("BuildGoal.PriorityFor : " + p + " ret patché(s)");
+
             Log(string.Format("IsMatchFor : {0} ret patché(s) ; GetPrepareFunction : {1} ret patché(s) ; TakeSome, EndWork, _GoPickUp, TakeFromEnumerable, ClosestObjectToPickup : entrée patchée ; _ClosestObjectToPickup_Test : {2} ret ; FindOneResource : {3} ret ; journal : Project.Hire {4} ret, IOperableExtender.Hire {5} ret, StoreEverything {6} ret + entrées SendOrder, AbsorbGarnottes, OperationSwitchTask, Recipe.Finish, DropAll, Task.OnFinally ; stockage : _ClosestStorageWithRoomFor_Test {7} ret, StoreEverything {8} ret + entrées ClosestStorageWithRoomFor, GoStoreIn, Task.OnFinally", a, b, e, f, j1, j2, j4, l, n));
         }
 
